@@ -9,11 +9,19 @@
 - 备份/恢复改为直接操作 SQLite 文件（`.db.gz`），部署脚本精简为两步
 - nginx 配置默认开启 gzip 压缩与静态资源缓存
 
+### 修复
+- upsert 改用版本无关写法，修复不同 SQLAlchemy 版本下 `on_conflict_do_update` 兼容报错
+- 迁移脚本自动将 `.env` 的 `DATABASE_URL` 从 PostgreSQL 切换为 SQLite（否则停 PG 后后端崩溃）
+- 迁移脚本在切换数据库后再导入照片，避免照片关联写入错误的库
+- 备份文件名同秒冲突（自动加序号避免覆盖）
+- install/update/migrate 脚本在 GitHub 不稳时自动回退国内镜像
+
 ### 新增
 - `backend/migrate_photos.py`：从旧版 PostgreSQL 迁移照片关联到 SQLite
+- `scripts/migrate_to_sqlite.sh`：一键自动迁移（备份→导出照片映射→切库→导入照片→重建前端）
 
 ### 说明
-- 旧版（PostgreSQL）升级：博主数据从金山重新同步，照片用迁移工具导入（详见 README）
+- 旧版（PostgreSQL）升级：博主数据从金山重新同步，照片自动迁移保留（详见 README）
 
 ## [1.0.2] - 2026-06-30
 

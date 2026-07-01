@@ -100,6 +100,19 @@ git -C "$PROJECT_DIR" pull --ff-only origin "$BRANCH" 2>/dev/null || true
 # 3) 后端依赖 + 重启（自动建 kol.db）
 step "更新后端依赖并重启"
 cd "$BACKEND_DIR"
+# 关键：把 DATABASE_URL 从 PostgreSQL 改为 SQLite（否则后端仍连旧 PG，停 PG 即崩）
+if grep -q '^DATABASE_URL=postgresql' .env 2>/dev/null; then
+  sed -i "s|^DATABASE_URL=.*|DATABASE_URL=sqlite:///${BACKEND_DIR}/kol.db|" .env
+  echo "已将 DATABASE_URL 切换为 SQLite（${BACKEND_DIR}/kol.db）"
+elif ! grep -q '^DATABASE_URL=sqlite' .env 2>/dev/null; then
+  # 无 DATABASE_URL 或其他值，统一写成 SQLite
+  if grep -q '^DATABASE_URL=' .env 2>/dev/null; then
+    sed -i "s|^DATABASE_URL=.*|DATABASE_URL=sqlite:///${BACKEND_DIR}/kol.db|" .env
+  else
+    echo "DATABASE_URL=sqlite:///${BACKEND_DIR}/kol.db" >> .env
+  fi
+  echo "已设置 DATABASE_URL 为 SQLite"
+fi
 # 确保 AUTH_SECRET 有值（沿用旧 .env；若为占位符则生成）
 if grep -q '^AUTH_SECRET=__AUTO_GENERATE__' .env 2>/dev/null; then
   AUTH_VAL="$(openssl rand -hex 32 2>/dev/null || head -c 48 /dev/urandom | base64 | tr -dc 'A-Za-z0-9' | head -c 48)"
@@ -113,7 +126,7 @@ sleep 3
 systemctl is-active --quiet "$SERVICE_NAME" || fail "后端启动失败，看 journalctl -u $SERVICE_NAME -n 50"
 echo "后端已切换到 SQLite 并重启"
 
-# 4) 导入照片映射
+# 4) 导入照片映射（此时已连 SQLite，导入进正确的库）
 step "导入照片映射"
 if [ -s "$PHOTO_MAP" ]; then
   ./venv/bin/python migrate_photos.py "$PHOTO_MAP"
