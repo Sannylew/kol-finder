@@ -7,7 +7,6 @@ from datetime import datetime
 from sqlalchemy import (
     Boolean, DateTime, Float, Integer, String, Text, create_engine, event, func, select,
 )
-from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, sessionmaker
 
 import config
@@ -188,22 +187,17 @@ def upsert_rows(rows: list[dict]) -> dict:
 
             update_cols = {k: v for k, v in data.items() if k != "uid"}
 
-            stmt = sqlite_insert(Kol).values(
-                **data,
-                updated_at=now,
-                created_at=now,
-            )
-            stmt = stmt.on_conflict_do_update(
-                index_elements=[Kol.uid],
-                set_={**update_cols, "updated_at": now},
-            )
-            session.execute(stmt)
-
-            if uid in existing_uids:
-                updated += 1
-            else:
+            # 版本无关的 upsert：存在则更新（保留 created_at），否则插入
+            obj = session.get(Kol, uid)
+            if obj is None:
+                session.add(Kol(**data, created_at=now, updated_at=now))
                 inserted += 1
                 existing_uids.add(uid)
+            else:
+                for col, val in update_cols.items():
+                    setattr(obj, col, val)
+                obj.updated_at = now
+                updated += 1
 
         session.add(SyncLog(
             synced_at=now, total=len(rows),
