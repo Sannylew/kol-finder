@@ -39,15 +39,20 @@
 kol-finder/
 ├── docker-compose.yml          PostgreSQL 容器配置
 ├── .env                        docker-compose 数据库凭证（不提交 git）
+├── VERSION                     版本号
+├── CHANGELOG.md                更新日志
 ├── airscript/
 │   └── read_sheet.js           金山文档里运行的只读脚本
 ├── scripts/                    运维脚本
 │   ├── deploy.sh               一键部署（依赖/库/后端/前端/nginx）
+│   ├── update.sh               从 GitHub 拉取更新（git pull）
+│   ├── upgrade.sh              解压新包覆盖升级（非 git 方式）
 │   ├── uninstall.sh            一键卸载（保留数据 / 全部清除）
 │   ├── backup.sh               数据库+照片备份
 │   └── restore.sh              从备份恢复
 ├── backend/                    后端
 │   ├── app.py                  FastAPI 主程序（API + 定时任务）
+│   ├── dedup.py                重复数据清理工具
 │   ├── run.py                  启动入口（127.0.0.1:8000）
 │   ├── auth.py                 登录鉴权
 │   ├── reset_password.py       忘记密码重置工具
@@ -86,16 +91,28 @@ kol-finder/
 
 以 Ubuntu/Debian 为例，部署到服务器供团队访问。
 
+### 获取代码
+
+推荐用 git 克隆（方便后续 `update.sh` 一键更新）：
+
+```bash
+cd /opt
+sudo git clone https://github.com/Sannylew/kol-finder.git
+cd kol-finder
+```
+
+> 也可下载 zip 解压，但 zip 方式无法用 `update.sh` 增量更新（需改用 `upgrade.sh`）。
+
 ### 方式一：一键脚本（推荐）
 
-把项目放到服务器（例如 `/opt/kol-finder`），在**项目根目录**执行：
+在**项目根目录**执行：
 
 ```bash
 cd /opt/kol-finder
 sudo bash scripts/deploy.sh
 ```
 
-脚本会自动完成全部步骤：安装依赖（Python / Node / nginx / Docker）→ 生成两个 `.env`（用预设值）→ 启动数据库 → 部署后端为开机自启服务 → 构建前端 → 配置 nginx。
+脚本会自动完成全部步骤：安装依赖（Python / Node / nginx / Docker）→ 生成两个 `.env`（**自动生成随机数据库密码和 AUTH_SECRET**）→ 启动数据库 → 部署后端为开机自启服务 → 构建前端 → 配置 nginx。
 
 脚本**分三步执行**，每步结束会停下等你按回车再继续，方便看清每步结果：
 1. 系统依赖 + Docker + 数据库
@@ -140,6 +157,26 @@ cd /opt/kol-finder && sudo docker compose restart   # 重启数据库
   { "registry-mirrors": ["https://docker.1panel.live", "https://docker.m.daocloud.io", "https://docker.1ms.run"] }
   ```
 - **脚本中途失败**：定位问题后直接再跑一次 `sudo bash scripts/deploy.sh`，已完成的步骤会自动跳过。
+
+#### 从 GitHub 更新
+
+用 git 克隆部署的，一条命令拉取最新代码并更新：
+
+```bash
+cd /opt/kol-finder
+sudo bash scripts/update.sh            # 更新到当前分支最新
+sudo bash scripts/update.sh v1.0.2     # 或更新到指定版本 tag
+```
+
+脚本会：备份 → `git pull` 拉最新代码 → 重装后端依赖 → 重启后端 → 重建前端 → reload nginx。`.env`、照片、数据库不受影响。
+
+> 若当初是解压 zip 部署（非 git），先接管为 git 仓库即可用上面的更新：
+> ```bash
+> cd /opt/kol-finder
+> sudo git init && sudo git remote add origin https://github.com/Sannylew/kol-finder.git
+> sudo git fetch origin && sudo git checkout -f main
+> ```
+> `.env`、`uploads/`、`backups/` 在 `.gitignore` 中，接管不会覆盖它们。
 
 #### 卸载
 

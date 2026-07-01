@@ -97,6 +97,28 @@ step "配置环境变量（.env）"
 sed -i 's/\r$//' "$PROJECT_DIR/.env" "$BACKEND_DIR/.env" 2>/dev/null || true
 echo "已就绪：根 .env、backend/.env"
 
+# 自动生成随机密钥，替换模板里的 __AUTO_GENERATE__ 占位符（首次部署时）
+gen_secret() { openssl rand -hex 16 2>/dev/null || head -c 24 /dev/urandom | base64 | tr -dc 'A-Za-z0-9' | head -c 24; }
+gen_auth()   { openssl rand -hex 32 2>/dev/null || head -c 48 /dev/urandom | base64 | tr -dc 'A-Za-z0-9' | head -c 48; }
+
+if grep -q '__AUTO_GENERATE__' "$PROJECT_DIR/.env"; then
+  DB_PASS="$(gen_secret)"
+  sed -i "s|__AUTO_GENERATE__|${DB_PASS}|g" "$PROJECT_DIR/.env"
+  # backend/.env 的 DATABASE_URL 里的同一占位符也用这个库密码替换
+  sed -i "s|postgresql+psycopg://\([^:]*\):__AUTO_GENERATE__@|postgresql+psycopg://\1:${DB_PASS}@|" "$BACKEND_DIR/.env"
+  echo "已生成随机数据库密码"
+fi
+if grep -q '^AUTH_SECRET=__AUTO_GENERATE__' "$BACKEND_DIR/.env"; then
+  AUTH_VAL="$(gen_auth)"
+  sed -i "s|^AUTH_SECRET=__AUTO_GENERATE__|AUTH_SECRET=${AUTH_VAL}|" "$BACKEND_DIR/.env"
+  echo "已生成随机 AUTH_SECRET"
+fi
+# 若 backend/.env 的 DATABASE_URL 仍残留占位符（例如根 .env 已存在未含占位符），用根库密码补齐
+if grep -q '__AUTO_GENERATE__' "$BACKEND_DIR/.env"; then
+  RP="$(grep -E '^POSTGRES_PASSWORD=' "$PROJECT_DIR/.env" | head -1 | cut -d= -f2- | tr -d '\r')"
+  [ -n "$RP" ] && sed -i "s|:__AUTO_GENERATE__@|:${RP}@|" "$BACKEND_DIR/.env"
+fi
+
 SERVER_IP="$(hostname -I 2>/dev/null | awk '{print $1}')"
 if [ -n "$SERVER_IP" ] && grep -q '^ALLOWED_ORIGINS=' "$BACKEND_DIR/.env"; then
   sed -i "s|^ALLOWED_ORIGINS=.*|ALLOWED_ORIGINS=http://$SERVER_IP:$HTTP_PORT|" "$BACKEND_DIR/.env"
