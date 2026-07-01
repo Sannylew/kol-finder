@@ -41,6 +41,7 @@ kol-finder/
 ├── .env                        docker-compose 数据库凭证（不提交 git）
 ├── VERSION                     版本号
 ├── CHANGELOG.md                更新日志
+├── install.sh                  一行引导安装（clone + 部署）
 ├── airscript/
 │   └── read_sheet.js           金山文档里运行的只读脚本
 ├── scripts/                    运维脚本
@@ -90,6 +91,28 @@ kol-finder/
 ## 部署
 
 以 Ubuntu/Debian 为例，部署到服务器供团队访问。
+
+### 一行安装（最简，需仓库公开）
+
+在服务器上执行一条命令，自动完成克隆代码 + 部署：
+
+```bash
+sudo bash <(curl -fsSL https://raw.githubusercontent.com/Sannylew/kol-finder/main/install.sh)
+```
+
+或用 wget：
+
+```bash
+sudo bash <(wget -qO- https://raw.githubusercontent.com/Sannylew/kol-finder/main/install.sh)
+```
+
+自定义安装目录或端口：
+
+```bash
+sudo INSTALL_DIR=/opt/kol-finder HTTP_PORT=9000 bash <(curl -fsSL https://raw.githubusercontent.com/Sannylew/kol-finder/main/install.sh)
+```
+
+> 脚本会自动装 git、克隆仓库到 `/opt/kol-finder`、再运行 `deploy.sh`。国内访问 `raw.githubusercontent.com` 不稳时，改用下面的「获取代码 + 一键脚本」方式。
 
 ### 获取代码
 
