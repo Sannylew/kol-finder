@@ -27,7 +27,7 @@
 |----|------|
 | 数据源 | 金山文档 AirScript（HTTP API，只读脚本） |
 | 后端 | Python + FastAPI + SQLAlchemy + APScheduler |
-| 数据库 | PostgreSQL 16（Docker） |
+| 数据库 | SQLite（单文件，零配置） |
 | 前端 | React 18 + TypeScript + Vite |
 | 鉴权 | JWT + PBKDF2 密码哈希 |
 
@@ -37,15 +37,13 @@
 
 ```
 kol-finder/
-├── docker-compose.yml          PostgreSQL 容器配置
-├── .env                        docker-compose 数据库凭证（不提交 git）
 ├── VERSION                     版本号
 ├── CHANGELOG.md                更新日志
-├── install.sh                  一行引导安装（clone + 部署）
+├── install.sh                  一键引导安装（clone + 部署）
 ├── airscript/
 │   └── read_sheet.js           金山文档里运行的只读脚本
 ├── scripts/                    运维脚本
-│   ├── deploy.sh               一键部署（依赖/库/后端/前端/nginx）
+│   ├── deploy.sh               一键部署（依赖/后端/前端/nginx）
 │   ├── update.sh               从 GitHub 拉取更新（git pull）
 │   ├── upgrade.sh              解压新包覆盖升级（非 git 方式）
 │   ├── uninstall.sh            一键卸载（保留数据 / 全部清除）
@@ -54,13 +52,14 @@ kol-finder/
 ├── backend/                    后端
 │   ├── app.py                  FastAPI 主程序（API + 定时任务）
 │   ├── dedup.py                重复数据清理工具
+│   ├── migrate_photos.py       照片关联迁移工具（旧库→SQLite）
 │   ├── run.py                  启动入口（127.0.0.1:8000）
 │   ├── auth.py                 登录鉴权
 │   ├── reset_password.py       忘记密码重置工具
 │   ├── kdocs_client.py         金山 API 客户端
 │   ├── sync.py                 同步逻辑
 │   ├── cleaner.py              数据清洗
-│   ├── db.py                   数据库模型
+│   ├── db.py                   数据库模型（SQLite）
 │   ├── queries.py              查询 + 脱敏 + 统计
 │   ├── photos.py               照片管理
 │   ├── maintenance.py          日志查看 + 备份/恢复
@@ -68,6 +67,7 @@ kol-finder/
 │   ├── settings_store.py       运行时配置存储
 │   ├── config.py               基础配置
 │   ├── .env                    实际配置（不提交 git）
+│   ├── kol.db                  SQLite 数据库文件（自动生成）
 │   ├── logs/                   运行日志（自动生成）
 │   ├── backups/                数据库备份（自动生成）
 │   └── uploads/                博主照片存储目录
@@ -83,18 +83,19 @@ kol-finder/
 ## 环境要求
 
 - Linux 服务器（Ubuntu / Debian，推荐 Ubuntu 22.04+）
-- Docker / Docker Compose（运行 PostgreSQL）
 - Python 3.11+、Node.js 18+、Nginx（一键脚本会自动安装）
+
+> 数据库使用 SQLite（单文件），无需 Docker、无需数据库服务。
 
 ---
 
 ## 部署
 
-以 Ubuntu/Debian 为例，部署到服务器供团队访问。
+以 Ubuntu/Debian 为例，部署到服务器供团队访问。提供三种方式，任选其一。
 
-### 一行安装（最简，需仓库公开）
+### 方式一：一键安装（最简单）
 
-在服务器上执行一条命令，自动完成克隆代码 + 部署：
+一条命令自动完成「安装 git → 克隆仓库 → 部署」：
 
 ```bash
 sudo bash <(curl -fsSL https://raw.githubusercontent.com/Sannylew/kol-finder/main/install.sh)
@@ -112,73 +113,52 @@ sudo bash <(wget -qO- https://raw.githubusercontent.com/Sannylew/kol-finder/main
 sudo INSTALL_DIR=/opt/kol-finder HTTP_PORT=9000 bash <(curl -fsSL https://raw.githubusercontent.com/Sannylew/kol-finder/main/install.sh)
 ```
 
-> 脚本会自动装 git、克隆仓库到 `/opt/kol-finder`、再运行 `deploy.sh`。国内访问 `raw.githubusercontent.com` 不稳时，改用下面的「获取代码 + 一键脚本」方式。
+> 若访问 `raw.githubusercontent.com` 不稳定，改用方式二。
 
-### 获取代码
+### 方式二：克隆仓库 + 部署脚本
 
-推荐用 git 克隆（方便后续 `update.sh` 一键更新）：
+先克隆代码（方便后续 `update.sh` 一键更新），再运行部署脚本：
 
 ```bash
 cd /opt
 sudo git clone https://github.com/Sannylew/kol-finder.git
 cd kol-finder
-```
-
-> 也可下载 zip 解压，但 zip 方式无法用 `update.sh` 增量更新（需改用 `upgrade.sh`）。
-
-### 方式一：一键脚本（推荐）
-
-在**项目根目录**执行：
-
-```bash
-cd /opt/kol-finder
 sudo bash scripts/deploy.sh
 ```
 
-脚本会自动完成全部步骤：安装依赖（Python / Node / nginx / Docker）→ 生成两个 `.env`（**自动生成随机数据库密码和 AUTH_SECRET**）→ 启动数据库 → 部署后端为开机自启服务 → 构建前端 → 配置 nginx。
+`deploy.sh` 会自动完成：安装依赖（Python / Node / nginx）→ 配置 `backend/.env`（自动生成随机 AUTH_SECRET）→ 安装后端依赖并注册为开机自启服务 → 构建前端 → 配置 nginx。数据库为 SQLite，随后端自动创建，无需额外配置。
 
-脚本**分三步执行**，每步结束会停下等你按回车再继续，方便看清每步结果：
-1. 系统依赖 + Docker + 数据库
-2. 后端（依赖 + 服务）
-3. 前端（构建 + nginx）
+脚本分两步执行，每步结束会停下等待确认，方便查看每步结果：
+1. 依赖 + 配置 + 后端服务
+2. 前端（构建 + nginx）
 
-> 想全自动不暂停（脚本化部署），加 `AUTO_YES=1`：`sudo AUTO_YES=1 bash scripts/deploy.sh`。
+> 无人值守部署可加 `AUTO_YES=1` 跳过每步确认：`sudo AUTO_YES=1 bash scripts/deploy.sh`。
 
-默认对外端口是 **8088**，想换端口加环境变量：
+默认对外端口为 **8088**，如需更改：
 
 ```bash
 sudo HTTP_PORT=9000 bash scripts/deploy.sh
 ```
 
-脚本可**重复执行**（更新代码后、或某步失败修复后再跑一次，已完成步骤会自动跳过）。
+脚本可重复执行（更新代码后、或某步失败修复后再次运行，已完成的步骤会自动跳过）。
 
-> 用 `bash scripts/deploy.sh` 调用即可，无需事先 `chmod`（zip 解压后权限位会丢失）。部署脚本会自动给 `scripts/` 下其余脚本补上可执行权限。
+> 方式一本质上也是自动执行方式二的步骤，两者结果一致。
 
-国内网络已自动处理：Docker 官方源失败会回退 Ubuntu 自带源、拉镜像超时会自动配国内加速器。
-
-部署完成后还需手动两件事：
-1. 云服务器**安全组**放行对应 TCP 端口（默认 8088）——在云控制台操作
+部署完成后还需：
+1. 云服务器**安全组**放行对应 TCP 端口（默认 8088）
 2. 浏览器访问 `http://服务器IP:8088`，用 **admin / admin123** 登录（首次强制改密），进【后台设置】填金山 Webhook + Token，点同步拉数据
 
 常用运维命令：
 
 ```bash
 sudo journalctl -u kol-backend -f          # 看后端实时日志
-sudo systemctl restart kol-backend         # 重启后端
-cd /opt/kol-finder && sudo docker compose restart   # 重启数据库
+sudo systemctl restart kol-backend         # 重启后端（数据库随后端加载）
 ```
 
 #### 安装常见问题
 
-- **Docker 安装失败 `curl: (35) Recv failure` / 连接被重置**：国内网络访问 Docker 官方源 `download.docker.com` 不稳。脚本已会自动回退到 Ubuntu 自带源；若仍失败，手动安装后重跑脚本：
-  ```bash
-  sudo apt install -y docker.io docker-compose-v2
-  sudo docker compose version    # 验证
-  ```
-- **拉取 PostgreSQL 镜像慢/超时**（第 3 步卡住，报 `i/o timeout` / `failed to resolve reference`）：脚本已自动配置国内镜像加速器（`/etc/docker/daemon.json`）。若仍超时，可换其他加速器后 `sudo systemctl restart docker` 再重跑：
-  ```json
-  { "registry-mirrors": ["https://docker.1panel.live", "https://docker.m.daocloud.io", "https://docker.1ms.run"] }
-  ```
+- **Node.js 安装失败 `curl: (35)` / 连接超时**：国内网络访问 NodeSource 不稳，重跑脚本即可重试；或先手动安装 Node 18+ 再重跑。
+- **端口被占用**：默认 8088，换端口重跑：`sudo HTTP_PORT=9000 bash scripts/deploy.sh`。
 - **脚本中途失败**：定位问题后直接再跑一次 `sudo bash scripts/deploy.sh`，已完成的步骤会自动跳过。
 
 #### 从 GitHub 更新
@@ -187,8 +167,8 @@ cd /opt/kol-finder && sudo docker compose restart   # 重启数据库
 
 ```bash
 cd /opt/kol-finder
-sudo bash scripts/update.sh            # 更新到当前分支最新
-sudo bash scripts/update.sh v1.0.2     # 或更新到指定版本 tag
+sudo bash scripts/update.sh            # 更新到最新版本
+sudo bash scripts/update.sh v1.0.2     # 或更新到指定版本（tag）
 ```
 
 脚本会：备份 → `git pull` 拉最新代码 → 重装后端依赖 → 重启后端 → 重建前端 → reload nginx。`.env`、照片、数据库不受影响。
@@ -199,7 +179,7 @@ sudo bash scripts/update.sh v1.0.2     # 或更新到指定版本 tag
 > sudo git init && sudo git remote add origin https://github.com/Sannylew/kol-finder.git
 > sudo git fetch origin && sudo git checkout -f main
 > ```
-> `.env`、`uploads/`、`backups/` 在 `.gitignore` 中，接管不会覆盖它们。
+> `.env`、`kol.db`、`uploads/`、`backups/` 在 `.gitignore` 中，接管不会覆盖它们。
 
 #### 卸载
 
@@ -207,133 +187,26 @@ sudo bash scripts/update.sh v1.0.2     # 或更新到指定版本 tag
 sudo bash scripts/uninstall.sh
 ```
 
-运行后选择：**1) 保留数据**（删服务/容器/构建产物，保留数据库、照片、备份、.env，之后可重新部署恢复）或 **2) 全部清除**（连数据一起删，需再输 `yes` 确认，等于全新）。卸载只移除本项目的后端服务、nginx 站点、数据库容器，**不会卸载 Docker / Node / nginx 等系统软件**（避免影响同机其他程序）。
+运行后选择：**1) 保留数据**（删服务/构建产物，保留数据库、照片、备份、.env，之后可重新部署恢复）或 **2) 全部清除**（连数据一起删，需再输 `yes` 确认，等于全新）。卸载只移除本项目的后端服务、nginx 站点，**不会卸载 Node / nginx 等系统软件**（避免影响同机其他程序）。
 
----
+#### 从旧版（PostgreSQL）迁移到 SQLite
 
-### 方式二：手动分步部署
+旧版本用 PostgreSQL，本版本改用 SQLite。博主数据从金山文档重新同步即可，**只需迁移照片**（照片是本地数据，不在金山）。步骤：
 
-> 想了解每一步在做什么、或脚本不适用时，按下面手动来。关键顺序：**先配好两个 `.env`，再启动数据库**（数据库密码只在首次创建数据卷时生效，顺序反了需 `docker compose down -v` 删卷重来）。
+1. 在**旧服务器**导出照片映射：
+   ```bash
+   docker exec kol_postgres psql -U kol kol_finder -At -F',' \
+     -c "SELECT uid, filename FROM kol_photo" > /opt/kol-finder/backend/photo_map.csv
+   ```
+2. 把旧服务器的 `backend/photo_map.csv` 和整个 `backend/uploads/` 目录复制到新部署的 `backend/` 下
+3. 在新服务器导入照片映射：
+   ```bash
+   cd /opt/kol-finder/backend
+   sudo ./venv/bin/python migrate_photos.py photo_map.csv
+   ```
+4. 登录后台点【立即同步】拉取博主数据 —— 照片按 uid（姓名+电话）自动对应显示
 
-#### 1. 准备代码与依赖
-
-```bash
-sudo apt update
-sudo apt install -y python3 python3-venv python3-pip nodejs npm nginx
-
-# 安装 Docker（如未安装）
-curl -fsSL https://get.docker.com | sudo sh
-sudo systemctl enable --now docker
-sudo docker compose version   # 验证
-
-cd /opt/kol-finder
-```
-
-> 国内服务器拉取镜像慢，可给 Docker 配置镜像加速器后再继续。
-> 若 `get.docker.com` 连接失败（国内常见 `curl: (35)` 连接重置），改用 Ubuntu 自带源：`sudo apt install -y docker.io docker-compose-v2`。
-
-#### 2. 配置环境变量（两个 .env，先配后启动）
-
-```bash
-sudo cp .env.example .env
-sudo cp backend/.env.example backend/.env
-```
-
-模板已预设可用值，内网开箱即用。**正式/公网部署建议改这几项**（根 `.env` 的 `POSTGRES_PASSWORD` 必须和 `backend/.env` 里 `DATABASE_URL` 中的密码一致）：
-
-| 文件 | 项 | 说明 |
-|------|-----|------|
-| `.env` + `backend/.env` | 数据库密码 | 两处改成同一个强密码 |
-| `backend/.env` | `AUTH_SECRET` | 换成自己的随机串（`openssl rand -hex 32`） |
-| `backend/.env` | `ALLOWED_ORIGINS` | 改成 `http://服务器IP:端口` |
-
-> 金山 Webhook 和 Token 不用写在 `.env`，部署后在网页后台「设置」里填即可。
-
-#### 3. 启动数据库
-
-```bash
-sudo docker compose up -d
-```
-
-#### 4. 部署后端
-
-```bash
-cd /opt/kol-finder/backend
-sudo python3 -m venv venv
-sudo ./venv/bin/pip install -r requirements.txt
-```
-
-用 **systemd** 守护后端（开机自启、崩溃自动重启）。创建 `/etc/systemd/system/kol-backend.service`（用 `sudo` 编辑，例如 `sudo nano /etc/systemd/system/kol-backend.service`）：
-
-```ini
-[Unit]
-Description=KOL Finder Backend
-After=network.target docker.service
-
-[Service]
-WorkingDirectory=/opt/kol-finder/backend
-ExecStart=/opt/kol-finder/backend/venv/bin/python run.py
-Restart=always
-User=root
-
-[Install]
-WantedBy=multi-user.target
-```
-
-> **重要：后端必须单进程运行（`python run.py`）**。定时同步在进程内调度，多 worker 会导致同步重复执行。
-
-启动：
-
-```bash
-sudo systemctl daemon-reload
-sudo systemctl enable --now kol-backend
-sudo systemctl status kol-backend
-```
-
-#### 5. 构建前端
-
-```bash
-cd /opt/kol-finder/frontend
-sudo npm install
-sudo npm run build          # 产物在 frontend/dist
-```
-
-#### 6. 配置 Nginx
-
-创建 `/etc/nginx/sites-available/kol-finder`（用 `sudo` 编辑，这里用 8088 端口，可自行调整）：
-
-```nginx
-server {
-    listen 8088;
-    server_name _;
-
-    root /opt/kol-finder/frontend/dist;
-    index index.html;
-    location / {
-        try_files $uri $uri/ /index.html;
-    }
-
-    location /api/ {
-        proxy_pass http://127.0.0.1:8000;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        client_max_body_size 60m;   # 允许上传照片/恢复备份
-    }
-    location /uploads/ {
-        proxy_pass http://127.0.0.1:8000;
-        proxy_set_header Host $host;
-    }
-}
-```
-
-启用并重载：
-
-```bash
-sudo ln -sf /etc/nginx/sites-available/kol-finder /etc/nginx/sites-enabled/kol-finder
-sudo nginx -t && sudo systemctl reload nginx
-```
-
-访问 `http://服务器IP:8088` 即可使用。首次登录默认管理员 **admin / admin123**，登录后**强制修改密码**。
+> 新旧版 uid 规则一致，照片精准对应，不会错位。
 
 ---
 
@@ -375,9 +248,9 @@ sudo nginx -t && sudo systemctl reload nginx
 
 **日志**：查看后端运行日志末尾若干行，可按 INFO/WARNING/ERROR 过滤。
 
-**备份**：一键备份数据库、下载、删除；支持上传 `.sql.gz` 备份恢复。恢复会覆盖当前数据，系统会在恢复前自动做一次快照以便回滚。
+**备份**：一键备份数据库、下载、删除；支持上传 `.db.gz` 备份恢复。恢复会覆盖当前数据，系统会在恢复前自动做一次快照以便回滚。
 
-> 网页备份/恢复依赖后端能执行 `docker exec`（容器内 pg_dump/psql）。若后端无 docker 权限，请改用服务器脚本 `scripts/backup.sh` 与 `scripts/restore.sh`。
+> 网页备份/恢复直接操作 SQLite 数据文件，无需额外依赖。也可用服务器脚本 `scripts/backup.sh` 与 `scripts/restore.sh`（可配 cron 定时备份）。
 
 > 首次用默认密码 `admin / admin123` 登录会强制改密；改密成功后旧登录失效，需用新密码重新登录。
 
@@ -390,13 +263,13 @@ sudo nginx -t && sudo systemctl reload nginx
                                                   │
                                           清洗（日期/布尔/尺码大写/地址）
                                                   │
-                                          增量 upsert（按抖音号识别唯一）
+                                          增量 upsert（按姓名+电话识别唯一）
                                                   ▼
-                                            PostgreSQL
+                                              SQLite
 ```
 
 - 同步只读取，不修改文档
-- 以抖音号（无则姓名+电话）作为唯一键，重复同步不会产生重复数据
+- 以「姓名+电话」作为唯一键，重复同步不会产生重复数据
 - 前端搜索/筛选/展示全部读本地数据库，快且稳
 
 ---
@@ -408,8 +281,8 @@ sudo nginx -t && sudo systemctl reload nginx
 - 登录失败 5 次锁定 5 分钟（锁定过期后重新计数）
 - 改密码后旧登录令牌立即失效
 - 仍为默认密码时，登录后强制修改
-- 生产环境强制要求 `DATABASE_URL` / `AUTH_SECRET` 环境变量，禁用内置默认密码
-- CORS 通过 `ALLOWED_ORIGINS` 限制来源；数据库端口只监听本机
+- 生产环境强制要求设置 `AUTH_SECRET` 环境变量（部署脚本自动生成随机值）
+- CORS 通过 `ALLOWED_ORIGINS` 限制来源；后端只监听本机 127.0.0.1，经 nginx 反代对外
 - 后端日志写入 `backend/logs/app.log`（5MB 轮转，保留 5 份），记录登录、同步、配置变更
 
 ### 忘记密码
@@ -440,7 +313,7 @@ sudo bash scripts/backup.sh
 
 ```bash
 # 从指定备份恢复（会覆盖当前数据，需确认）
-sudo bash scripts/restore.sh backups/db-20260628-030000.sql.gz backups/uploads-20260628-030000.tar.gz
+sudo bash scripts/restore.sh backups/db-20260628-030000.db.gz backups/uploads-20260628-030000.tar.gz
 ```
 
 > 备份默认保留 14 天（`KEEP_DAYS` 可调）。建议把 `backups/` 目录定期同步到异地或对象存储。
@@ -449,14 +322,10 @@ sudo bash scripts/restore.sh backups/db-20260628-030000.sql.gz backups/uploads-2
 
 ## 常用命令
 
-> 以下为**本地开发/调试**用（开发机，无需 sudo）。生产服务器请用前面「部署」章节的 systemd / docker 命令。
+> 以下为**本地开发/调试**用（开发机，无需 sudo）。生产服务器请用前面「部署」章节的 systemd 命令。
 
 ```bash
-# 启动/停止数据库
-docker compose up -d
-docker compose down
-
-# 后端
+# 后端（首次运行自动创建 SQLite 数据库 backend/kol.db）
 cd backend && python run.py
 
 # 手动同步一次（命令行）
@@ -473,6 +342,6 @@ cd frontend && npm run build
 
 ## 注意事项
 
-- `.env`、`backend/.env`、`backend/uploads/`、数据库数据不应提交到 git（已在 `.gitignore` 中）
+- `.env`、`backend/.env`、`backend/kol.db`、`backend/uploads/`、备份数据不应提交到 git（已在 `.gitignore` 中）
 - 默认管理员 admin / admin123 仅供首次登录，登录后会强制改密
 - 系统设计为内网使用，公网开放前请确保使用强密码、配置 HTTPS 并收紧 CORS

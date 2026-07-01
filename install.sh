@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# KOL Finder 一行引导安装脚本
+# KOL Finder 一键引导安装脚本
 #
-# 一行安装（需仓库公开）：
+# 一键安装（需仓库公开）：
 #   bash <(curl -fsSL https://raw.githubusercontent.com/Sannylew/kol-finder/main/install.sh)
 # 或：
 #   bash <(wget -qO- https://raw.githubusercontent.com/Sannylew/kol-finder/main/install.sh)

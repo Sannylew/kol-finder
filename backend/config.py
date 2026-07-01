@@ -40,18 +40,13 @@ SYNC_INTERVAL_SECONDS = int(os.environ.get("SYNC_INTERVAL_SECONDS", "300"))
 APP_ENV = os.environ.get("APP_ENV", "development").strip().lower()
 IS_PROD = APP_ENV in ("production", "prod")
 
-# PostgreSQL 连接串。
-# 开发环境允许用本地默认值；生产环境必须显式提供 DATABASE_URL，否则启动报错。
-_DEFAULT_DB_URL = "postgresql+psycopg://kol:kol_pass_2026@127.0.0.1:5432/kol_finder"
-DATABASE_URL = os.environ.get("DATABASE_URL", "").strip()
-if not DATABASE_URL:
-    if IS_PROD:
-        raise RuntimeError(
-            "生产环境必须设置 DATABASE_URL 环境变量（不允许使用内置默认密码）。"
-        )
-    DATABASE_URL = _DEFAULT_DB_URL
+# 数据库连接串。默认使用 backend 目录下的 SQLite 文件 kol.db。
+# 也可用 DATABASE_URL 环境变量覆盖（例如指向其他路径或数据库）。
+_DEFAULT_DB_PATH = Path(__file__).with_name("kol.db")
+_DEFAULT_DB_URL = f"sqlite:///{_DEFAULT_DB_PATH.as_posix()}"
+DATABASE_URL = os.environ.get("DATABASE_URL", "").strip() or _DEFAULT_DB_URL
 
-# JWT 密钥。生产环境必须设置 AUTH_SECRET，否则多进程/重启后令牌不一致。
+# JWT 密钥。生产环境必须设置 AUTH_SECRET，否则重启后已登录令牌全部失效。
 AUTH_SECRET = os.environ.get("AUTH_SECRET", "").strip()
 if IS_PROD and not AUTH_SECRET:
     raise RuntimeError(
@@ -65,7 +60,8 @@ ADMIN_INIT_PASSWORD = os.environ.get("ADMIN_INIT_PASSWORD", "").strip()
 LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO").strip().upper()
 
 # ---------- 备份相关 ----------
-# Docker 中 PostgreSQL 的容器名 / 用户 / 库名，供后台备份调用 pg_dump 使用
-PG_CONTAINER = os.environ.get("PG_CONTAINER", "kol_postgres")
-PG_USER = os.environ.get("POSTGRES_USER", "kol")
-PG_DB = os.environ.get("POSTGRES_DB", "kol_finder")
+# SQLite 数据文件路径（从 DATABASE_URL 解析，供备份/恢复使用）
+if DATABASE_URL.startswith("sqlite"):
+    DB_FILE = DATABASE_URL.replace("sqlite:///", "", 1)
+else:
+    DB_FILE = ""

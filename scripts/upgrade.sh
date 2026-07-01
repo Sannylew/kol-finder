@@ -52,7 +52,6 @@ cp -f "$SRC_DIR/frontend/index.html" "$TARGET_DIR/frontend/" 2>/dev/null || true
 cp -f "$SRC_DIR/frontend/package.json" "$SRC_DIR/frontend/package-lock.json" "$TARGET_DIR/frontend/" 2>/dev/null || true
 cp -f "$SRC_DIR/frontend/vite.config.ts" "$SRC_DIR/frontend/tsconfig.json" "$SRC_DIR/frontend/tsconfig.node.json" "$TARGET_DIR/frontend/" 2>/dev/null || true
 cp -rf "$SRC_DIR/scripts" "$TARGET_DIR/"
-cp -f "$SRC_DIR/docker-compose.yml" "$TARGET_DIR/" 2>/dev/null || true
 cp -f "$SRC_DIR/README.md" "$SRC_DIR/CHANGELOG.md" "$SRC_DIR/VERSION" "$TARGET_DIR/" 2>/dev/null || true
 cp -rf "$SRC_DIR/airscript" "$TARGET_DIR/" 2>/dev/null || true
 echo "代码已更新"

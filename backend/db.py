@@ -1,18 +1,36 @@
 """
-PostgreSQL 存储层（SQLAlchemy）。以 uid 为唯一键做 upsert，并记录同步日志。
+SQLite 存储层（SQLAlchemy）。以 uid 为唯一键做 upsert，并记录同步日志。
+数据文件默认在 backend/kol.db（可用 DATABASE_URL 覆盖）。
 """
 from datetime import datetime
 
 from sqlalchemy import (
-    Boolean, DateTime, Float, Integer, String, Text, create_engine, func, select,
+    Boolean, DateTime, Float, Integer, String, Text, create_engine, event, func, select,
 )
-from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, sessionmaker
 
 import config
 
-engine = create_engine(config.DATABASE_URL, pool_pre_ping=True, future=True)
+# SQLite 需要 check_same_thread=False 以配合多线程（APScheduler + Web）
+_is_sqlite = config.DATABASE_URL.startswith("sqlite")
+_connect_args = {"check_same_thread": False} if _is_sqlite else {}
+engine = create_engine(
+    config.DATABASE_URL, connect_args=_connect_args, pool_pre_ping=True, future=True
+)
 SessionLocal = sessionmaker(bind=engine, expire_on_commit=False, future=True)
+
+
+# 启用 WAL 模式 + 外键，提升并发读写与稳定性
+if _is_sqlite:
+    @event.listens_for(engine, "connect")
+    def _sqlite_pragma(dbapi_conn, _rec):
+        cur = dbapi_conn.cursor()
+        cur.execute("PRAGMA journal_mode=WAL")
+        cur.execute("PRAGMA synchronous=NORMAL")
+        cur.execute("PRAGMA foreign_keys=ON")
+        cur.execute("PRAGMA busy_timeout=5000")
+        cur.close()
 
 
 class Base(DeclarativeBase):
@@ -170,7 +188,7 @@ def upsert_rows(rows: list[dict]) -> dict:
 
             update_cols = {k: v for k, v in data.items() if k != "uid"}
 
-            stmt = pg_insert(Kol).values(
+            stmt = sqlite_insert(Kol).values(
                 **data,
                 updated_at=now,
                 created_at=now,

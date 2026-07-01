@@ -2,6 +2,19 @@
 
 本项目版本变更记录。遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [1.1.0] - 2026-07-01
+
+### 变更
+- **数据库从 PostgreSQL 改为 SQLite**（单文件，零配置），移除 Docker 依赖，大幅简化部署
+- 备份/恢复改为直接操作 SQLite 文件（`.db.gz`），部署脚本精简为两步
+- nginx 配置默认开启 gzip 压缩与静态资源缓存
+
+### 新增
+- `backend/migrate_photos.py`：从旧版 PostgreSQL 迁移照片关联到 SQLite
+
+### 说明
+- 旧版（PostgreSQL）升级：博主数据从金山重新同步，照片用迁移工具导入（详见 README）
+
 ## [1.0.2] - 2026-06-30
 
 ### 安全
