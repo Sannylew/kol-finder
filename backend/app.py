@@ -65,7 +65,7 @@ async def lifespan(app: FastAPI):
     logger.info("应用关闭，调度器已停止")
 
 
-app = FastAPI(title="KOL Finder API", version="1.0", lifespan=lifespan)
+app = FastAPI(title="KOL Finder API", version=config.APP_VERSION, lifespan=lifespan)
 
 # 允许访问的前端来源。生产通过 ALLOWED_ORIGINS 环境变量显式配置。
 _ALLOWED_ORIGINS = [o.strip() for o in os.environ.get(
@@ -94,7 +94,13 @@ def health():
     except Exception as e:  # noqa: BLE001
         logger.error("健康检查失败，数据库不可用: %s", e)
         raise HTTPException(status_code=503, detail="数据库不可用")
-    return {"status": "ok", "kol_count": count}
+    return {"status": "ok", "kol_count": count, "version": config.APP_VERSION}
+
+
+@app.get("/api/version")
+def version():
+    """返回应用版本号（供前端显示）。"""
+    return {"version": config.APP_VERSION}
 
 
 @app.get("/api/kols")

@@ -125,6 +125,15 @@ export async function fetchStats(): Promise<Stats> {
   return data;
 }
 
+export async function fetchVersion(): Promise<string> {
+  try {
+    const { data } = await api.get<{ version: string }>("/api/version");
+    return data.version || "";
+  } catch {
+    return "";
+  }
+}
+
 // ---------- 运维：日志 + 备份 ----------
 
 export interface LogResult {

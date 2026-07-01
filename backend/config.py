@@ -23,6 +23,17 @@ def _load_dotenv() -> None:
 
 _load_dotenv()
 
+# 应用版本号：读取项目根目录的 VERSION 文件（供前端显示）
+def _read_version() -> str:
+    try:
+        vf = Path(__file__).resolve().parent.parent / "VERSION"
+        return vf.read_text(encoding="utf-8").strip() or "unknown"
+    except Exception:  # noqa: BLE001
+        return "unknown"
+
+
+APP_VERSION = _read_version()
+
 # 推荐：直接配置完整 webhook 链接
 KDOCS_WEBHOOK_URL = os.environ.get("KDOCS_WEBHOOK_URL", "")
 

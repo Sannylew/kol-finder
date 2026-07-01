@@ -298,3 +298,8 @@ header{position:sticky;top:0;z-index:50;display:flex;align-items:center;justify-
 .stat-card.accent .sc-label{color:var(--accent-ink)}
 @media (max-width:1024px){.stat-bar{grid-template-columns:repeat(3,1fr)}}
 @media (max-width:560px){.stat-bar{grid-template-columns:repeat(2,1fr);gap:9px}.stat-card{padding:13px 14px}.stat-card .sc-num{font-size:22px}}
+
+/* 页脚版本号 */
+.app-footer{display:flex;align-items:center;justify-content:center;gap:10px;padding:28px 40px 34px;margin-top:20px;border-top:1px solid var(--line);color:var(--muted-2)}
+.app-footer .mark{font-family:var(--font-display);font-size:13px;font-weight:600;letter-spacing:.3px}
+.app-footer .ver{font-size:12px;padding:2px 9px;border-radius:999px;background:var(--surface-2);border:1px solid var(--line);color:var(--muted)}

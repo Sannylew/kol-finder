@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import type { Kol, FilterOptions, SyncStatus } from "./types";
 import {
   fetchKols, fetchFilterOptions, fetchSyncStatus, triggerSync, fetchPublicConfig, getToken, clearToken,
-  fetchStats, type Stats,
+  fetchStats, type Stats, fetchVersion,
 } from "./api";
 import KolCard from "./components/KolCard";
 import KolDrawer from "./components/KolDrawer";
@@ -46,6 +46,7 @@ export default function App() {
   const [isAdmin, setIsAdmin] = useState(!!getToken());
   const [confirmLogout, setConfirmLogout] = useState(false);
   const [stats, setStats] = useState<Stats | null>(null);
+  const [version, setVersion] = useState("");
 
   function refreshStats() {
     fetchStats().then(setStats).catch(() => {});
@@ -92,6 +93,7 @@ export default function App() {
     fetchSyncStatus().then(setSync).catch(() => {});
     refreshPublicConfig();
     refreshStats();
+    fetchVersion().then(setVersion).catch(() => {});
   }, []);
 
   // 筛选变化时回到第一页
@@ -357,6 +359,11 @@ export default function App() {
           }).then((res) => { setItems(res.items); setTotal(res.total); setPages(res.pages); }).catch(() => {});
         }}
       />
+
+      <footer className="app-footer">
+        <span className="mark">KOL Finder</span>
+        {version && <span className="ver">v{version}</span>}
+      </footer>
     </>
   );
 }
