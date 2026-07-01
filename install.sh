@@ -37,10 +37,14 @@ if ! command -v git >/dev/null 2>&1; then
   apt-get update -qq && apt-get install -y -qq git
 fi
 
-# 2) 获取代码：已存在则更新，否则克隆
+MIRROR_URL="https://ghfast.top/${REPO_URL}"
+
+# 2) 获取代码：已存在则更新，否则克隆（github 不稳时自动切镜像）
+git config --global http.version HTTP/1.1 2>/dev/null || true
 if [ -d "$INSTALL_DIR/.git" ]; then
   c_info "==> 检测到已存在的部署，拉取最新代码 ..."
-  git -C "$INSTALL_DIR" fetch origin --tags --prune
+  git -C "$INSTALL_DIR" fetch origin --tags --prune \
+    || { git -C "$INSTALL_DIR" remote set-url origin "$MIRROR_URL"; git -C "$INSTALL_DIR" fetch origin --tags --prune; git -C "$INSTALL_DIR" remote set-url origin "$REPO_URL"; }
   git -C "$INSTALL_DIR" checkout -f "$BRANCH"
   git -C "$INSTALL_DIR" pull --ff-only origin "$BRANCH" || true
 elif [ -d "$INSTALL_DIR" ] && [ -n "$(ls -A "$INSTALL_DIR" 2>/dev/null)" ]; then
@@ -48,7 +52,11 @@ elif [ -d "$INSTALL_DIR" ] && [ -n "$(ls -A "$INSTALL_DIR" 2>/dev/null)" ]; then
   exit 1
 else
   c_info "==> 克隆仓库 ..."
-  git clone --branch "$BRANCH" "$REPO_URL" "$INSTALL_DIR"
+  if ! git clone --branch "$BRANCH" "$REPO_URL" "$INSTALL_DIR" 2>/dev/null; then
+    c_info "==> 官方源不可用，改用国内镜像加速 ..."
+    git clone --branch "$BRANCH" "$MIRROR_URL" "$INSTALL_DIR"
+    git -C "$INSTALL_DIR" remote set-url origin "$REPO_URL"
+  fi
 fi
 
 # 3) 调用部署脚本

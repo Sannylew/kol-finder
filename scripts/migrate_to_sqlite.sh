@@ -70,7 +70,30 @@ fi
 
 # 2) 拉取 SQLite 版代码
 step "拉取 SQLite 版代码（$BRANCH）"
-git -C "$PROJECT_DIR" fetch origin --tags --prune
+# 国内网络对 github.com 常不稳，自动重试并回退到镜像
+_git_fetch() {
+  local url_official="https://github.com/Sannylew/kol-finder.git"
+  local url_mirror="https://ghfast.top/https://github.com/Sannylew/kol-finder.git"
+  git -C "$PROJECT_DIR" config http.version HTTP/1.1 2>/dev/null || true
+  # 先试当前 origin（可能是官方），失败再切镜像
+  for i in 1 2; do
+    if git -C "$PROJECT_DIR" fetch origin --tags --prune 2>/dev/null; then
+      return 0
+    fi
+    echo "  拉取失败，重试 ($i) ..."
+    sleep 2
+  done
+  echo "  官方源不可用，切换到国内镜像加速 ..."
+  git -C "$PROJECT_DIR" remote set-url origin "$url_mirror"
+  if git -C "$PROJECT_DIR" fetch origin --tags --prune; then
+    # 拉成功后把地址还原为官方，方便后续正常使用
+    git -C "$PROJECT_DIR" remote set-url origin "$url_official"
+    return 0
+  fi
+  git -C "$PROJECT_DIR" remote set-url origin "$url_official"
+  return 1
+}
+_git_fetch || fail "拉取代码失败（网络问题）。可稍后重试，或手动 git fetch 后重跑本脚本"
 git -C "$PROJECT_DIR" checkout -f "$BRANCH"
 git -C "$PROJECT_DIR" pull --ff-only origin "$BRANCH" 2>/dev/null || true
 

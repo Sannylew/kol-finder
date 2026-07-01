@@ -33,13 +33,22 @@ step "备份当前数据"
 
 # 2) 拉取最新代码
 step "拉取最新代码"
-git fetch origin --tags --prune
+# 国内网络对 github.com 不稳时，自动重试并回退到镜像
+OFFICIAL_URL="$(git remote get-url origin 2>/dev/null || echo '')"
+MIRROR_URL="https://ghfast.top/https://github.com/Sannylew/kol-finder.git"
+git config http.version HTTP/1.1 2>/dev/null || true
+if ! git fetch origin --tags --prune 2>/dev/null; then
+  echo "  官方源拉取失败，切换到国内镜像 ..."
+  git remote set-url origin "$MIRROR_URL"
+  git fetch origin --tags --prune || { git remote set-url origin "$OFFICIAL_URL"; fail "拉取失败（网络问题），请稍后重试"; }
+  git remote set-url origin "$OFFICIAL_URL"
+fi
 if [ -n "$REF" ]; then
   git checkout -f "$REF"
   git pull --ff-only origin "$REF" 2>/dev/null || true
 else
   BR="$(git rev-parse --abbrev-ref HEAD)"
-  git pull --ff-only origin "$BR"
+  git pull --ff-only origin "$BR" 2>/dev/null || true
 fi
 NEW_VER="$(cat VERSION 2>/dev/null || echo unknown)"
 echo "更新后版本：$NEW_VER"
