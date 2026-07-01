@@ -18,6 +18,8 @@ INSTALL_DIR="${INSTALL_DIR:-/opt/kol-finder}"
 BRANCH="${BRANCH:-main}"
 REPO_URL="https://github.com/Sannylew/kol-finder.git"
 MIRROR_URL="https://ghfast.top/${REPO_URL}"
+# 国内网络对官方源常不稳，默认优先镜像；设 PREFER_OFFICIAL=1 可强制先用官方
+PREFER_OFFICIAL="${PREFER_OFFICIAL:-0}"
 
 c_info() { echo -e "\033[36m$*\033[0m"; }
 c_err()  { echo -e "\033[31m$*\033[0m"; }
@@ -45,14 +47,21 @@ if [ ! -d "$INSTALL_DIR/.git" ]; then
 fi
 git remote get-url origin >/dev/null 2>&1 || git remote add origin "$REPO_URL"
 
-# 3) 拉取代码（官方失败自动切镜像）
+# 3) 拉取代码（默认优先国内镜像，失败回退官方）
 c_info "==> 拉取最新代码 ..."
-if ! git fetch origin --tags --prune 2>/dev/null; then
-  c_info "   官方源不可用，切换国内镜像 ..."
-  git remote set-url origin "$MIRROR_URL"
-  git fetch origin --tags --prune || { c_err "拉取失败（网络问题），请稍后重试"; exit 1; }
-  git remote set-url origin "$REPO_URL"
+if [ "$PREFER_OFFICIAL" = "1" ]; then
+  FIRST_URL="$REPO_URL"; SECOND_URL="$MIRROR_URL"
+else
+  FIRST_URL="$MIRROR_URL"; SECOND_URL="$REPO_URL"
 fi
+git remote set-url origin "$FIRST_URL"
+if ! git fetch origin --tags --prune 2>/dev/null; then
+  c_info "   首选源不可用，切换备用源 ..."
+  git remote set-url origin "$SECOND_URL"
+  git fetch origin --tags --prune || { c_err "拉取失败（网络问题），请稍后重试"; exit 1; }
+fi
+# 拉成功后统一还原为官方地址，方便后续正常使用
+git remote set-url origin "$REPO_URL"
 
 # 4) 取出迁移脚本（确保用最新版）
 git checkout -f "origin/$BRANCH" -- scripts/migrate_to_sqlite.sh backend/migrate_photos.py

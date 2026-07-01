@@ -196,8 +196,10 @@ sudo bash scripts/uninstall.sh
 旧版本用 PostgreSQL，本版本改用 SQLite。在旧版部署的服务器上执行**一条命令**即可自动迁移（博主数据从金山重新同步，照片自动保留）：
 
 ```bash
-sudo bash <(curl -fsSL https://raw.githubusercontent.com/Sannylew/kol-finder/main/auto_migrate.sh)
+curl -fsSL https://ghfast.top/https://raw.githubusercontent.com/Sannylew/kol-finder/main/auto_migrate.sh -o /tmp/auto_migrate.sh || curl -fsSL https://raw.githubusercontent.com/Sannylew/kol-finder/main/auto_migrate.sh -o /tmp/auto_migrate.sh; sudo bash /tmp/auto_migrate.sh
 ```
+
+> 采用「先下载到 /tmp 再 sudo 执行」，避免普通用户 `sudo bash <(curl ...)` 因进程替换导致的 `/dev/fd/63: 没有那个文件` 报错；并优先用国内镜像 `ghfast.top` 下载，官方源不通时自动回退。
 
 脚本自动完成：安装 git → 接管现有部署为 git 仓库 → 拉取代码 → 备份 → 导出照片映射 → 切换到 SQLite → 导入照片 → 重建前端 → 停止旧 PG 容器。
 

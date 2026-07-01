@@ -74,19 +74,26 @@ step "拉取 SQLite 版代码（$BRANCH）"
 _git_fetch() {
   local url_official="https://github.com/Sannylew/kol-finder.git"
   local url_mirror="https://ghfast.top/https://github.com/Sannylew/kol-finder.git"
+  local first second
   git -C "$PROJECT_DIR" config http.version HTTP/1.1 2>/dev/null || true
-  # 先试当前 origin（可能是官方），失败再切镜像
+  # 国内网络对 github.com 常不稳，默认优先镜像；PREFER_OFFICIAL=1 可强制先用官方
+  if [ "${PREFER_OFFICIAL:-0}" = "1" ]; then
+    first="$url_official"; second="$url_mirror"
+  else
+    first="$url_mirror"; second="$url_official"
+  fi
+  git -C "$PROJECT_DIR" remote set-url origin "$first"
   for i in 1 2; do
     if git -C "$PROJECT_DIR" fetch origin --tags --prune 2>/dev/null; then
+      git -C "$PROJECT_DIR" remote set-url origin "$url_official"
       return 0
     fi
     echo "  拉取失败，重试 ($i) ..."
     sleep 2
   done
-  echo "  官方源不可用，切换到国内镜像加速 ..."
-  git -C "$PROJECT_DIR" remote set-url origin "$url_mirror"
+  echo "  首选源不可用，切换备用源 ..."
+  git -C "$PROJECT_DIR" remote set-url origin "$second"
   if git -C "$PROJECT_DIR" fetch origin --tags --prune; then
-    # 拉成功后把地址还原为官方，方便后续正常使用
     git -C "$PROJECT_DIR" remote set-url origin "$url_official"
     return 0
   fi
