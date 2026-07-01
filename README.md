@@ -191,22 +191,23 @@ sudo bash scripts/uninstall.sh
 
 #### 从旧版（PostgreSQL）迁移到 SQLite
 
-旧版本用 PostgreSQL，本版本改用 SQLite。博主数据从金山文档重新同步即可，**只需迁移照片**（照片是本地数据，不在金山）。步骤：
+旧版本用 PostgreSQL，本版本改用 SQLite。提供**自动迁移脚本**，一条命令完成（博主数据从金山重新同步，照片自动保留）：
 
-1. 在**旧服务器**导出照片映射：
-   ```bash
-   docker exec kol_postgres psql -U kol kol_finder -At -F',' \
-     -c "SELECT uid, filename FROM kol_photo" > /opt/kol-finder/backend/photo_map.csv
-   ```
-2. 把旧服务器的 `backend/photo_map.csv` 和整个 `backend/uploads/` 目录复制到新部署的 `backend/` 下
-3. 在新服务器导入照片映射：
-   ```bash
-   cd /opt/kol-finder/backend
-   sudo ./venv/bin/python migrate_photos.py photo_map.csv
-   ```
-4. 登录后台点【立即同步】拉取博主数据 —— 照片按 uid（姓名+电话）自动对应显示
+```bash
+cd /opt/kol-finder
+# 先取回迁移脚本（趁 PG 还在）。正式版用 main，尝鲜/测试用 dev
+sudo git fetch origin
+sudo git checkout -f origin/main -- scripts/migrate_to_sqlite.sh backend/migrate_photos.py
+# 运行自动迁移（默认拉 main；测试 dev 用：sudo BRANCH=dev bash ...）
+sudo bash scripts/migrate_to_sqlite.sh
+```
 
-> 新旧版 uid 规则一致，照片精准对应，不会错位。
+脚本会自动：备份 → 导出照片映射（趁 PG 在）→ 拉取 SQLite 版代码 → 重装依赖并重启（建 SQLite 库）→ 导入照片 → 重建前端。完成后：
+
+1. 浏览器登录后台点【立即同步】拉博主数据（照片按 uid 自动对应）
+2. 确认无误后停掉旧 PG 容器：`cd /opt/kol-finder && sudo docker compose down`
+
+> 新旧版 uid 规则一致（姓名+电话），照片精准对应，不会错位。迁移前的备份在 `backend/backups/`，异常可回滚。
 
 ---
 
