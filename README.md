@@ -40,12 +40,14 @@ kol-finder/
 ├── VERSION                     版本号
 ├── CHANGELOG.md                更新日志
 ├── install.sh                  一键引导安装（clone + 部署）
+├── auto_migrate.sh             一键迁移引导（旧版 PG → SQLite）
 ├── airscript/
 │   └── read_sheet.js           金山文档里运行的只读脚本
 ├── scripts/                    运维脚本
 │   ├── deploy.sh               一键部署（依赖/后端/前端/nginx）
 │   ├── update.sh               从 GitHub 拉取更新（git pull）
 │   ├── upgrade.sh              解压新包覆盖升级（非 git 方式）
+│   ├── migrate_to_sqlite.sh    PG→SQLite 迁移（被 auto_migrate.sh 调用）
 │   ├── uninstall.sh            一键卸载（保留数据 / 全部清除）
 │   ├── backup.sh               数据库+照片备份
 │   └── restore.sh              从备份恢复
@@ -191,23 +193,19 @@ sudo bash scripts/uninstall.sh
 
 #### 从旧版（PostgreSQL）迁移到 SQLite
 
-旧版本用 PostgreSQL，本版本改用 SQLite。提供**自动迁移脚本**，一条命令完成（博主数据从金山重新同步，照片自动保留）：
+旧版本用 PostgreSQL，本版本改用 SQLite。在旧版部署的服务器上执行**一条命令**即可自动迁移（博主数据从金山重新同步，照片自动保留）：
 
 ```bash
-cd /opt/kol-finder
-# 先取回迁移脚本（趁 PG 还在）。正式版用 main，尝鲜/测试用 dev
-sudo git fetch origin
-sudo git checkout -f origin/main -- scripts/migrate_to_sqlite.sh backend/migrate_photos.py
-# 运行自动迁移（默认拉 main；测试 dev 用：sudo BRANCH=dev bash ...）
-sudo bash scripts/migrate_to_sqlite.sh
+sudo bash <(curl -fsSL https://raw.githubusercontent.com/Sannylew/kol-finder/main/auto_migrate.sh)
 ```
 
-脚本会自动：备份 → 导出照片映射（趁 PG 在）→ 拉取 SQLite 版代码 → 重装依赖并重启（建 SQLite 库）→ 导入照片 → 重建前端。完成后：
+脚本自动完成：安装 git → 接管现有部署为 git 仓库 → 拉取代码 → 备份 → 导出照片映射 → 切换到 SQLite → 导入照片 → 重建前端 → 停止旧 PG 容器。
 
-1. 浏览器登录后台点【立即同步】拉博主数据（照片按 uid 自动对应）
-2. 确认无误后停掉旧 PG 容器：`cd /opt/kol-finder && sudo docker compose down`
+迁移完成后：**浏览器登录后台点【立即同步】** 拉取博主数据，照片按 uid（姓名+电话）自动对应显示。
 
-> 新旧版 uid 规则一致（姓名+电话），照片精准对应，不会错位。迁移前的备份在 `backend/backups/`，异常可回滚。
+> - 保留 PG 容器（不自动停）：加 `KEEP_PG=1`
+> - 迁移前的备份在 `backend/backups/`，异常可回滚
+> - 确认稳定后释放空间：`cd /opt/kol-finder && sudo docker compose down -v`
 
 ---
 

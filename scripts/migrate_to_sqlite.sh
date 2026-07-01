@@ -144,16 +144,35 @@ nginx -t && systemctl reload nginx || echo "（nginx 重载有警告，请手动
 
 chmod +x "$PROJECT_DIR"/scripts/*.sh 2>/dev/null || true
 
+# 6) 自检 + 自动停止 PG（迁移已完成，后端已连 SQLite）
+# 自检：后端健康接口正常才停 PG，避免误停导致不可用
+step "自检并停止旧 PostgreSQL 容器"
+HEALTH="$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:8000/api/health" 2>/dev/null || echo 000)"
+if [ "$HEALTH" = "200" ] && [ "${KEEP_PG:-0}" != "1" ]; then
+  cd "$PROJECT_DIR"
+  # 停止并移除 PG 容器（保留数据卷，便于万一回滚；彻底清理可手动 docker compose down -v）
+  docker compose down 2>/dev/null || docker stop "$PG_CONTAINER" 2>/dev/null || true
+  echo "已停止旧 PostgreSQL 容器（数据卷保留，可回滚）"
+  PG_STOPPED=1
+else
+  if [ "$HEALTH" != "200" ]; then
+    echo "自检未通过（/api/health=$HEALTH），为安全起见暂不停止 PG，请排查后手动停止"
+  else
+    echo "KEEP_PG=1，按要求保留 PG 容器"
+  fi
+  PG_STOPPED=0
+fi
+
 echo
 echo "============================================================"
 echo "  迁移完成（已切换到 SQLite）"
 echo "============================================================"
-echo "  下一步："
-echo "    1) 浏览器登录后台 → 点【立即同步】拉取博主数据"
-echo "       （照片会按 uid 自动对应显示）"
-echo "    2) 确认数据/照片正常后，停止不再需要的 PG 容器："
-echo "         cd $PROJECT_DIR && sudo docker compose down"
-echo "       （确认无误后可加 -v 删除数据卷释放空间：docker compose down -v）"
+echo "  下一步：浏览器登录后台 → 点【立即同步】拉取博主数据"
+echo "          （照片会按 uid 自动对应显示）"
+if [ "${PG_STOPPED:-0}" = "1" ]; then
+  echo "  旧 PG 容器已自动停止；确认稳定几天后可释放空间："
+  echo "    cd $PROJECT_DIR && sudo docker compose down -v"
+fi
 echo "------------------------------------------------------------"
 echo "  数据文件：$BACKEND_DIR/kol.db"
 echo "  如迁移异常，可用迁移前的备份回滚（backend/backups/）。"
