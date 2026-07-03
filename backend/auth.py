@@ -113,7 +113,7 @@ def init_auth() -> None:
                 pwd_hash=_hash(init_pwd, salt),
                 salt=salt,
             ))
-            # 标记是否仍为默认密码：是则登录后强制改密
+            # 标记是否仍为默认密码：登录后前台温和提示（不强制）
             session.add(AuthMeta(
                 key=f"must_change:{DEFAULT_USERNAME}",
                 value="1" if is_default else "0",
@@ -121,7 +121,7 @@ def init_auth() -> None:
             session.commit()
             if is_default:
                 logger.warning(
-                    "已创建默认管理员 %s / %s，首次登录将强制修改密码",
+                    "已创建默认管理员 %s / %s，建议尽快修改密码",
                     DEFAULT_USERNAME, DEFAULT_PASSWORD,
                 )
             else:

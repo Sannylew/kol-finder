@@ -209,6 +209,27 @@ def unpin_kol(uid: str, _user: str = Depends(auth.verify_token)):
     return {"ok": True, "priority": None}
 
 
+@app.put("/api/kols/priority/batch")
+def set_priority_batch(payload: dict, _user: str = Depends(auth.verify_token)):
+    """批量设置/清空博主优先级。body: {uids: [...], priority: int|null}。需登录。"""
+    uids = (payload or {}).get("uids") or []
+    if not isinstance(uids, list) or not uids:
+        raise HTTPException(status_code=400, detail="缺少要修改的博主")
+    raw = (payload or {}).get("priority", None)
+    if raw is None or raw == "":
+        value = None
+    else:
+        try:
+            value = int(raw)
+        except (TypeError, ValueError):
+            raise HTTPException(status_code=400, detail="优先级必须是整数")
+        if value < 0:
+            raise HTTPException(status_code=400, detail="优先级不能为负数")
+    n = db.set_priority_batch([str(u) for u in uids], value)
+    logger.info("批量设置优先级 by=%s: %d 个 -> %s", _user, n, value)
+    return {"ok": True, "updated": n, "priority": value}
+
+
 @app.get("/api/sync-logs")
 def get_sync_logs(limit: int = Query(50, ge=1, le=500), _user: str = Depends(auth.verify_token)):
     """历史同步记录（倒序）。需登录。"""

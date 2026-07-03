@@ -18,6 +18,7 @@ export default function ChangePassword() {
     try {
       await changePassword(oldPwd, newPwd);
       clearToken();
+      localStorage.removeItem("kol_default_pwd");
       setMsg({ type: "ok", text: "密码已修改，请用新密码重新登录" });
       setTimeout(() => nav("/admin/login", { replace: true }), 1200);
     } catch (e: any) {

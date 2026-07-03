@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { NavLink, Outlet, useNavigate } from "react-router-dom";
+import { NavLink, Outlet, useNavigate, Link } from "react-router-dom";
 import { clearToken } from "../api";
 
 const MENU: { group: string; items: { to: string; label: string; end?: boolean }[] }[] = [
@@ -32,9 +32,12 @@ const MENU: { group: string; items: { to: string; label: string; end?: boolean }
 export default function AdminLayout() {
   const nav = useNavigate();
   const [menuOpen, setMenuOpen] = useState(false);
+  const [dismissed, setDismissed] = useState(false);
+  const usingDefaultPwd = localStorage.getItem("kol_default_pwd") === "1";
 
   function logout() {
     clearToken();
+    localStorage.removeItem("kol_default_pwd");
     nav("/admin/login", { replace: true });
   }
 
@@ -72,6 +75,12 @@ export default function AdminLayout() {
           <button className="admin-top-link danger" onClick={logout}>退出登录</button>
         </header>
         <main className="admin-content">
+          {usingDefaultPwd && !dismissed && (
+            <div className="admin-pwd-tip">
+              <span>当前使用默认密码，建议尽快<Link to="/admin/password">修改密码</Link>以保障安全。</span>
+              <button className="admin-pwd-tip-close" onClick={() => setDismissed(true)} title="忽略">×</button>
+            </div>
+          )}
           <Outlet />
         </main>
       </div>

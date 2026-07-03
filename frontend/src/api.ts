@@ -170,6 +170,11 @@ export async function unpinKol(uid: string): Promise<void> {
   await api.delete(`/api/kols/${encodeURIComponent(uid)}/pin`);
 }
 
+export async function setPriorityBatch(uids: string[], priority: number | null): Promise<{ updated: number }> {
+  const { data } = await api.put("/api/kols/priority/batch", { uids, priority });
+  return data;
+}
+
 // ---------- 同步记录 ----------
 
 export interface SyncLogItem {

@@ -390,6 +390,21 @@ def unpin_kol(uid: str) -> bool:
     return set_priority(uid, None)
 
 
+def set_priority_batch(uids: list[str], value: int | None) -> int:
+    """批量设置/清空优先级。返回实际更新的博主数量。单事务处理。"""
+    if not uids:
+        return 0
+    updated = 0
+    with SessionLocal() as session:
+        for uid in uids:
+            obj = session.get(Kol, uid)
+            if obj is not None:
+                obj.priority = value
+                updated += 1
+        session.commit()
+    return updated
+
+
 def list_sync_logs(limit: int = 50) -> list[dict]:
     """历史同步记录，按时间倒序。"""
     limit = min(max(1, limit), 500)

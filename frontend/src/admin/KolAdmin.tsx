@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import {
-  fetchKols, setKolPriority, pinKol, unpinKol, deleteKol,
+  fetchKols, setKolPriority, pinKol, unpinKol, deleteKol, setPriorityBatch,
 } from "../api";
 import type { Kol } from "../types";
 import ConfirmDialog from "../components/ConfirmDialog";
@@ -19,6 +19,46 @@ export default function KolAdmin() {
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [confirmDel, setConfirmDel] = useState<Kol | null>(null);
   const [msg, setMsg] = useState<{ type: "ok" | "err"; text: string } | null>(null);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [batchValue, setBatchValue] = useState("");
+  const [batchBusy, setBatchBusy] = useState(false);
+
+  function toggleSelect(uid: string) {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(uid)) next.delete(uid); else next.add(uid);
+      return next;
+    });
+  }
+
+  async function applyBatch(clear: boolean) {
+    const uids = Array.from(selected);
+    if (!uids.length) return;
+    let value: number | null;
+    if (clear) {
+      value = null;
+    } else {
+      const raw = batchValue.trim();
+      const n = Number(raw);
+      if (raw === "" || !Number.isInteger(n) || n < 0) {
+        setMsg({ type: "err", text: "请输入非负整数优先级" });
+        return;
+      }
+      value = n;
+    }
+    setBatchBusy(true); setMsg(null);
+    try {
+      const { updated } = await setPriorityBatch(uids, value);
+      setMsg({ type: "ok", text: clear ? `已清空 ${updated} 个优先级` : `已批量设置 ${updated} 个为 ${value}` });
+      setSelected(new Set());
+      setBatchValue("");
+      load();
+    } catch (e: any) {
+      setMsg({ type: "err", text: e?.response?.data?.detail || "批量操作失败" });
+    } finally {
+      setBatchBusy(false);
+    }
+  }
 
   useEffect(() => {
     const t = setTimeout(() => setDebKeyword(keyword), 350);
@@ -26,6 +66,9 @@ export default function KolAdmin() {
   }, [keyword]);
 
   useEffect(() => { setPage(1); }, [debKeyword]);
+
+  // 切换搜索/翻页时清空选择，避免误操作不可见的行
+  useEffect(() => { setSelected(new Set()); }, [debKeyword, page]);
 
   function load() {
     setLoading(true);
@@ -95,19 +138,39 @@ export default function KolAdmin() {
           <input placeholder="搜索姓名 / 电话 / 公司 / 备注…" value={keyword} onChange={(e) => setKeyword(e.target.value)} />
         </div>
 
+        {selected.size > 0 && (
+          <div className="batch-bar">
+            <span className="batch-count">已选 {selected.size} 个</span>
+            <input
+              className="prio-input"
+              value={batchValue}
+              placeholder="优先级"
+              onChange={(e) => setBatchValue(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && applyBatch(false)}
+            />
+            <button className="btn-primary sm" disabled={batchBusy} onClick={() => applyBatch(false)}>应用</button>
+            <button className="btn-ghost sm" disabled={batchBusy} onClick={() => applyBatch(true)}>清空优先级</button>
+            <button className="btn-ghost sm" disabled={batchBusy} onClick={() => setSelected(new Set())}>取消选择</button>
+          </div>
+        )}
+
         {loading ? <p className="hint">读取中…</p>
           : items.length === 0 ? <p className="hint">没有找到博主</p>
           : (
             <table className="admin-table kol-table">
               <thead>
                 <tr>
+                  <th className="col-check"></th>
                   <th>姓名</th><th>电话</th><th>公司</th><th>合同</th>
                   <th>照片</th><th>优先级</th><th>操作</th>
                 </tr>
               </thead>
               <tbody>
                 {items.map((k) => (
-                  <tr key={k.uid} className={busyUid === k.uid ? "busy" : ""}>
+                  <tr key={k.uid} className={`${busyUid === k.uid ? "busy" : ""} ${selected.has(k.uid) ? "selected" : ""}`}>
+                    <td className="col-check">
+                      <input type="checkbox" checked={selected.has(k.uid)} onChange={() => toggleSelect(k.uid)} />
+                    </td>
                     <td>{k.name || "—"}</td>
                     <td className="mono">{k.phone || "—"}</td>
                     <td>{k.company || "—"}</td>
