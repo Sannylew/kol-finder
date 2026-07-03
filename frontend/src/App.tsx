@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from "react";
-import { Link } from "react-router-dom";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { Link, useSearchParams } from "react-router-dom";
 import type { Kol, FilterOptions } from "./types";
 import {
   fetchKols, fetchFilterOptions, fetchPublicConfig, getToken,
@@ -8,7 +8,12 @@ import {
 import KolCard from "./components/KolCard";
 import KolDrawer from "./components/KolDrawer";
 
-const PAGE_SIZE = 20;
+const PAGE_SIZE_KEY = "kol_page_size";
+const PAGE_SIZE_OPTIONS = [20, 50, 100];
+function initialPageSize(): number {
+  const v = Number(localStorage.getItem(PAGE_SIZE_KEY));
+  return PAGE_SIZE_OPTIONS.includes(v) ? v : 20;
+}
 
 function useDebounced<T>(value: T, delay = 350): T {
   const [v, setV] = useState(value);
@@ -20,13 +25,20 @@ function useDebounced<T>(value: T, delay = 350): T {
 }
 
 export default function App() {
-  const [keyword, setKeyword] = useState("");
+  const [searchParams, setSearchParams] = useSearchParams();
+  const sp0 = useMemo(() => searchParams, []); // 仅用初始值初始化状态，后续由状态回写 URL
+  const initContract = (["yes", "no"].includes(sp0.get("contract") || "") ? sp0.get("contract") : "") as "" | "yes" | "no";
+  const initPage = Math.max(1, Number(sp0.get("page")) || 1);
+
+  const [keyword, setKeyword] = useState(sp0.get("kw") || "");
   const debKeyword = useDebounced(keyword);
-  const [contract, setContract] = useState<"" | "yes" | "no">("");
-  const [size, setSize] = useState("");
-  const [period, setPeriod] = useState("");
-  const [company, setCompany] = useState("");
-  const [page, setPage] = useState(1);
+  const [contract, setContract] = useState<"" | "yes" | "no">(initContract);
+  const [size, setSize] = useState(sp0.get("size") || "");
+  const [period, setPeriod] = useState(sp0.get("period") || "");
+  const [company, setCompany] = useState(sp0.get("company") || "");
+  const [page, setPage] = useState(initPage);
+  const [pageSize, setPageSize] = useState(initialPageSize);
+  const [showTop, setShowTop] = useState(false);
 
   const [items, setItems] = useState<Kol[]>([]);
   const [total, setTotal] = useState(0);
@@ -39,6 +51,7 @@ export default function App() {
   const [toast, setToast] = useState<{ text: string; type: "" | "ok" | "err" }>({ text: "", type: "" });
   const [masked, setMasked] = useState(false);
   const [companyName, setCompanyName] = useState("");
+  const [showCompanyOnCard, setShowCompanyOnCard] = useState(false);
   const [configLoaded, setConfigLoaded] = useState(false);
   const [stats, setStats] = useState<Stats | null>(null);
   const [version, setVersion] = useState("");
@@ -51,7 +64,11 @@ export default function App() {
 
   function refreshPublicConfig() {
     fetchPublicConfig()
-      .then((c) => { setMasked(!!c.mask_enabled); setCompanyName(c.company_name || ""); })
+      .then((c) => {
+        setMasked(!!c.mask_enabled);
+        setCompanyName(c.company_name || "");
+        setShowCompanyOnCard(!!c.show_company_on_card);
+      })
       .catch(() => {})
       .finally(() => setConfigLoaded(true));
   }
@@ -69,8 +86,24 @@ export default function App() {
     fetchVersion().then(setVersion).catch(() => {});
   }, []);
 
-  // 筛选变化时回到第一页
-  useEffect(() => { setPage(1); }, [debKeyword, contract, size, period, company]);
+  // 筛选或每页数量变化时回到第一页（跳过首次挂载，避免覆盖 URL 里带的 page 参数）
+  const firstFilterRun = useRef(true);
+  useEffect(() => {
+    if (firstFilterRun.current) { firstFilterRun.current = false; return; }
+    setPage(1);
+  }, [debKeyword, contract, size, period, company, pageSize]);
+
+  // 浏览状态同步到 URL（刷新/分享/前进后退保留；pageSize 属个人偏好走 localStorage）
+  useEffect(() => {
+    const next: Record<string, string> = {};
+    if (debKeyword) next.kw = debKeyword;
+    if (contract) next.contract = contract;
+    if (size) next.size = size;
+    if (period) next.period = period;
+    if (company) next.company = company;
+    if (page > 1) next.page = String(page);
+    setSearchParams(next, { replace: true });
+  }, [debKeyword, contract, size, period, company, page, setSearchParams]);
 
   // 加载列表
   useEffect(() => {
@@ -83,7 +116,7 @@ export default function App() {
       coop_period: period,
       company,
       page,
-      page_size: PAGE_SIZE,
+      page_size: pageSize,
     })
       .then((res) => {
         setItems(res.items);
@@ -92,7 +125,38 @@ export default function App() {
       })
       .catch((e) => setError(e?.message || "加载失败，请确认后端已启动"))
       .finally(() => setLoading(false));
-  }, [debKeyword, contract, size, period, company, page]);
+  }, [debKeyword, contract, size, period, company, page, pageSize]);
+
+  // 越界保护：数据变化后当前页超过总页数时，回落到最后一页
+  useEffect(() => {
+    if (!loading && pages >= 1 && page > pages) {
+      setPage(pages);
+    }
+  }, [loading, pages, page]);
+
+  // 返回顶部按钮：滚动超过一屏后显示
+  useEffect(() => {
+    const onScroll = () => setShowTop(window.scrollY > 600);
+    window.addEventListener("scroll", onScroll, { passive: true });
+    onScroll();
+    return () => window.removeEventListener("scroll", onScroll);
+  }, []);
+
+  function changePageSize(n: number) {
+    setPageSize(n);
+    localStorage.setItem(PAGE_SIZE_KEY, String(n));
+  }
+
+  function resetFilters() {
+    setKeyword("");
+    setContract("");
+    setSize("");
+    setPeriod("");
+    setCompany("");
+    setPage(1);
+  }
+
+  const hasActiveFilter = !!(keyword || contract || size || period || company);
 
   function handlePhotoChange(uid: string, photoUrl: string | null) {
     setItems((prev) => prev.map((k) => (k.uid === uid ? { ...k, photo_url: photoUrl } : k)));
@@ -194,6 +258,14 @@ export default function App() {
               {options.sizes.map((s) => <option key={s} value={s}>{s}</option>)}
             </select>
           </div>
+          {hasActiveFilter && (
+            <button className="btn-reset" onClick={resetFilters} title="清空所有筛选条件">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M3 6h18M6 6v14a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2V6M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+              </svg>
+              重置筛选
+            </button>
+          )}
         </div>
       </div>
 
@@ -220,29 +292,47 @@ export default function App() {
         <>
           <div className="grid">
             {items.map((k, i) => (
-              <KolCard key={k.uid} kol={k} index={i} masked={effectiveMask} onClick={() => setSelected(k)} onToast={showToast} />
+              <KolCard key={k.uid} kol={k} index={i} masked={effectiveMask} showCompany={showCompanyOnCard} onClick={() => setSelected(k)} onToast={showToast} />
             ))}
           </div>
-          {pages > 1 && (
-            <div className="pager">
-              <button disabled={page <= 1} onClick={() => setPage(page - 1)}>‹</button>
-              {pageButtons.map((p, i) =>
-                p === "..." ? (
-                  <span className="gap" key={`g${i}`}>…</span>
-                ) : (
-                  <button
-                    key={p}
-                    className={p === page ? "active" : ""}
-                    onClick={() => setPage(p as number)}
-                  >
-                    {p}
-                  </button>
-                )
-              )}
-              <button disabled={page >= pages} onClick={() => setPage(page + 1)}>›</button>
+          <div className="pager-bar">
+            {pages > 1 && (
+              <div className="pager">
+                <button disabled={page <= 1} onClick={() => setPage(page - 1)}>‹</button>
+                {pageButtons.map((p, i) =>
+                  p === "..." ? (
+                    <span className="gap" key={`g${i}`}>…</span>
+                  ) : (
+                    <button
+                      key={p}
+                      className={p === page ? "active" : ""}
+                      onClick={() => setPage(p as number)}
+                    >
+                      {p}
+                    </button>
+                  )
+                )}
+                <button disabled={page >= pages} onClick={() => setPage(page + 1)}>›</button>
+              </div>
+            )}
+            <div className="page-size">
+              <span>每页</span>
+              <div className="select-wrap">
+                <select value={pageSize} onChange={(e) => changePageSize(Number(e.target.value))}>
+                  {PAGE_SIZE_OPTIONS.map((n) => <option key={n} value={n}>{n}</option>)}
+                </select>
+              </div>
             </div>
-          )}
+          </div>
         </>
+      )}
+
+      {showTop && (
+        <button className="back-top" onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })} title="返回顶部">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2">
+            <path d="M12 19V5M5 12l7-7 7 7" />
+          </svg>
+        </button>
       )}
 
       <KolDrawer

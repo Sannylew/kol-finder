@@ -357,6 +357,7 @@ def public_config():
     return {
         "mask_enabled": settings_store.is_mask_enabled(),
         "company_name": settings_store.get_company_name(),
+        "show_company_on_card": settings_store.is_show_company_on_card(),
     }
 
 
@@ -369,7 +370,7 @@ def get_settings(_user: str = Depends(auth.verify_token)):
 @app.put("/api/settings")
 def update_settings(payload: dict, _user: str = Depends(auth.verify_token)):
     """更新后台配置。token 传空表示不修改。修改间隔会重排定时任务。需登录。"""
-    allowed = {"kdocs_webhook_url", "kdocs_token", "sync_interval_seconds", "mask_enabled", "auto_sync_enabled", "company_name"}
+    allowed = {"kdocs_webhook_url", "kdocs_token", "sync_interval_seconds", "mask_enabled", "auto_sync_enabled", "company_name", "show_company_on_card"}
     items = {k: v for k, v in payload.items() if k in allowed}
 
     # 校验同步间隔
@@ -383,7 +384,7 @@ def update_settings(payload: dict, _user: str = Depends(auth.verify_token)):
             raise HTTPException(status_code=400, detail="同步间隔必须是数字")
 
     # 开关类转 0/1
-    for sw in ("mask_enabled", "auto_sync_enabled"):
+    for sw in ("mask_enabled", "auto_sync_enabled", "show_company_on_card"):
         if sw in items:
             items[sw] = "1" if items[sw] in (True, "1", "true", "True", 1) else "0"
 

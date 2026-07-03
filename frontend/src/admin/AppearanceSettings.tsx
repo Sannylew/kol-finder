@@ -4,6 +4,7 @@ import { fetchSettings, saveSettings } from "../api";
 export default function AppearanceSettings() {
   const [companyName, setCompanyName] = useState("");
   const [mask, setMask] = useState(false);
+  const [showCompany, setShowCompany] = useState(false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState<{ type: "ok" | "err"; text: string } | null>(null);
@@ -13,6 +14,7 @@ export default function AppearanceSettings() {
       .then((s: any) => {
         setCompanyName(s.company_name || "");
         setMask(s.mask_enabled === "1" || s.mask_enabled === 1 || s.mask_enabled === true);
+        setShowCompany(s.show_company_on_card === "1" || s.show_company_on_card === 1 || s.show_company_on_card === true);
       })
       .catch(() => setMsg({ type: "err", text: "读取配置失败" }))
       .finally(() => setLoading(false));
@@ -21,7 +23,11 @@ export default function AppearanceSettings() {
   async function handleSave() {
     setSaving(true); setMsg(null);
     try {
-      await saveSettings({ company_name: companyName.trim(), mask_enabled: mask ? "1" : "0" } as any);
+      await saveSettings({
+        company_name: companyName.trim(),
+        mask_enabled: mask ? "1" : "0",
+        show_company_on_card: showCompany ? "1" : "0",
+      } as any);
       setMsg({ type: "ok", text: "已保存，配置立即生效" });
     } catch (e: any) {
       setMsg({ type: "err", text: e?.response?.data?.detail || "保存失败" });
@@ -51,6 +57,16 @@ export default function AppearanceSettings() {
             <p className="hint">开启后访客只能看到姓名和照片，电话、抖音号、地址、身材、备注等全部打码。</p>
           </div>
           <button className={`switch ${mask ? "on" : ""}`} onClick={() => setMask(!mask)} aria-label="脱敏开关">
+            <span className="knob" />
+          </button>
+        </div>
+
+        <div className="field toggle-field">
+          <div>
+            <label>卡片显示公司</label>
+            <p className="hint">开启后前台卡片显示公司行；关闭则隐藏（详情页与后台不受影响）。</p>
+          </div>
+          <button className={`switch ${showCompany ? "on" : ""}`} onClick={() => setShowCompany(!showCompany)} aria-label="卡片显示公司开关">
             <span className="knob" />
           </button>
         </div>

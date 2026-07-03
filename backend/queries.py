@@ -123,7 +123,8 @@ def list_kols(
     page_size = min(max(1, page_size), 200)
 
     with SessionLocal() as session:
-        stmt = select(Kol)
+        # 只展示文档中现存的博主（in_doc=True）；文档已删除的进入「已移除博主」区域，不在此显示
+        stmt = select(Kol).where(Kol.in_doc.is_(True))
 
         if keyword:
             like = f"%{keyword.strip()}%"
@@ -146,7 +147,8 @@ def list_kols(
             if masked_view:
                 # 访客看到的是打码公司名，反查所有打码后等于该值的真实公司名再匹配
                 all_companies = session.execute(
-                    select(Kol.company).distinct().where(Kol.company.isnot(None))
+                    select(Kol.company).distinct()
+                    .where(Kol.company.isnot(None), Kol.in_doc.is_(True))
                 ).all()
                 matched = [c for (c,) in all_companies if c and _mask_generic(c) == company]
                 if matched:
@@ -232,22 +234,26 @@ def stats(privileged: bool = False) -> dict:
     week_start = today_start - timedelta(days=today_start.weekday())  # 本周一 00:00
 
     with SessionLocal() as session:
-        total = session.scalar(select(func.count()).select_from(Kol)) or 0
+        # 统计只计文档中现存的博主（in_doc=True），排除已移除待清理的
+        active = Kol.in_doc.is_(True)
+        total = session.scalar(
+            select(func.count()).select_from(Kol).where(active)
+        ) or 0
         contracted = session.scalar(
-            select(func.count()).select_from(Kol).where(Kol.has_contract.is_(True))
+            select(func.count()).select_from(Kol).where(active, Kol.has_contract.is_(True))
         ) or 0
 
         # 今日 / 本周新增（按 created_at；created_at 仅首次入库时写入，不会被同步覆盖）
         today_new = session.scalar(
-            select(func.count()).select_from(Kol).where(Kol.created_at >= today_start)
+            select(func.count()).select_from(Kol).where(active, Kol.created_at >= today_start)
         ) or 0
         week_new = session.scalar(
-            select(func.count()).select_from(Kol).where(Kol.created_at >= week_start)
+            select(func.count()).select_from(Kol).where(active, Kol.created_at >= week_start)
         ) or 0
 
         # 尺码分布
         size_rows = session.execute(
-            select(Kol.size, func.count())
+            select(Kol.size, func.count()).where(active)
             .group_by(Kol.size).order_by(func.count().desc())
         ).all()
         size_dist = [
@@ -256,15 +262,19 @@ def stats(privileged: bool = False) -> dict:
 
         # 合作周期分布
         period_rows = session.execute(
-            select(Kol.coop_period, func.count())
+            select(Kol.coop_period, func.count()).where(active)
             .group_by(Kol.coop_period).order_by(func.count().desc())
         ).all()
         period_dist = [
             {"period": p or "未填", "count": c} for p, c in period_rows
         ]
 
-    # 有照片的博主数
-    with_photo = photos.count_photos()
+        # 有照片的博主数（只计现存博主：kol_photo 关联 in_doc=True 的 uid）
+        from photos import KolPhoto
+        with_photo = session.scalar(
+            select(func.count()).select_from(KolPhoto)
+            .join(Kol, Kol.uid == KolPhoto.uid).where(active)
+        ) or 0
 
     return {
         "total": total,
@@ -285,16 +295,17 @@ def filter_options(privileged: bool = False) -> dict:
     """
     masked = settings_store.is_mask_enabled() and not privileged
     with SessionLocal() as session:
+        active = Kol.in_doc.is_(True)
         sizes = [s for (s,) in session.execute(
-            select(Kol.size).distinct().where(Kol.size.isnot(None)).order_by(Kol.size)
+            select(Kol.size).distinct().where(Kol.size.isnot(None), active).order_by(Kol.size)
         ).all() if s]
         periods = [p for (p,) in session.execute(
             select(Kol.coop_period).distinct()
-            .where(Kol.coop_period.isnot(None)).order_by(Kol.coop_period)
+            .where(Kol.coop_period.isnot(None), active).order_by(Kol.coop_period)
         ).all() if p]
         raw_companies = [c for (c,) in session.execute(
             select(Kol.company).distinct()
-            .where(Kol.company.isnot(None)).order_by(Kol.company)
+            .where(Kol.company.isnot(None), active).order_by(Kol.company)
         ).all() if c]
 
     if masked:

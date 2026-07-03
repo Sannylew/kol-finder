@@ -217,7 +217,7 @@ export async function changePassword(old_password: string, new_password: string)
   await api.post("/api/auth/change-password", { old_password, new_password });
 }
 
-export async function fetchPublicConfig(): Promise<{ mask_enabled: boolean; company_name?: string }> {
+export async function fetchPublicConfig(): Promise<{ mask_enabled: boolean; company_name?: string; show_company_on_card?: boolean }> {
   const { data } = await api.get("/api/public-config");
   return data;
 }

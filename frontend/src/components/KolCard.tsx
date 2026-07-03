@@ -6,6 +6,7 @@ interface Props {
   kol: Kol;
   index: number;
   masked?: boolean;
+  showCompany?: boolean;
   onClick: () => void;
   onToast: (msg: string) => void;
 }
@@ -14,7 +15,7 @@ function fmt(v: number | null): string {
   return v === null || v === undefined ? "—" : String(v);
 }
 
-export default function KolCard({ kol, index, masked, onClick, onToast }: Props) {
+export default function KolCard({ kol, index, masked, showCompany, onClick, onToast }: Props) {
   const [copied, setCopied] = useState("");
 
   function copy(e: React.MouseEvent, key: string, value: string | null, label: string) {
@@ -73,10 +74,12 @@ export default function KolCard({ kol, index, masked, onClick, onToast }: Props)
 
       <div className="cbody">
         <div className="contact">
-          <div className="crow">
-            <span className="lbl">公司</span>
-            <span className="cval">{kol.company || "—"}</span>
-          </div>
+          {showCompany && (
+            <div className="crow">
+              <span className="lbl">公司</span>
+              <span className="cval">{kol.company || "—"}</span>
+            </div>
+          )}
           <div className="crow">
             <span className="lbl">抖音</span>
             <span className="cval mono">{kol.douyin_id || "—"}</span>
