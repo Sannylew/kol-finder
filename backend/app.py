@@ -132,6 +132,28 @@ def list_kols(
     )
 
 
+# 注意：/api/kols/removed 必须声明在 /api/kols/{uid} 之前，否则 removed 会被当作 uid 匹配。
+@app.get("/api/kols/removed")
+def list_removed_kols(_user: str = Depends(auth.verify_token)):
+    """列出文档已移除、本地仍保留（in_doc=False）的博主。需登录。"""
+    items = db.list_removed()
+    return {"count": len(items), "items": items}
+
+
+@app.get("/api/kols/removed/count")
+def removed_count(_user: str = Depends(auth.verify_token)):
+    """已移除博主数量（供右上角角标）。需登录。"""
+    return {"count": db.count_removed()}
+
+
+@app.post("/api/kols/removed/purge")
+def purge_removed_kols(_user: str = Depends(auth.verify_token)):
+    """一键清理全部 in_doc=False 的博主（连带主图+包裹图）。需登录。"""
+    n = db.purge_removed()
+    logger.warning("清理已移除博主 by=%s: 删除 %d 个", _user, n)
+    return {"ok": True, "deleted": n}
+
+
 @app.get("/api/kols/{uid}")
 def get_kol(uid: str, logged_in: bool = Depends(auth.is_logged_in)):
     """达人详情。管理员登录则不脱敏。"""
@@ -139,6 +161,16 @@ def get_kol(uid: str, logged_in: bool = Depends(auth.is_logged_in)):
     if not row:
         raise HTTPException(status_code=404, detail="未找到该达人")
     return row
+
+
+@app.delete("/api/kols/{uid}")
+def delete_kol(uid: str, _user: str = Depends(auth.verify_token)):
+    """删除单个博主及其关联（主图+包裹图）。需登录。"""
+    ok = db.delete_kol(uid)
+    if not ok:
+        raise HTTPException(status_code=404, detail="未找到该博主")
+    logger.warning("删除博主 by=%s: uid=%s", _user, uid)
+    return {"ok": True}
 
 
 @app.get("/api/stats")

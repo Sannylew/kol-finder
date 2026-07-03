@@ -5,7 +5,7 @@ SQLite 存储层（SQLAlchemy）。以 uid 为唯一键做 upsert，并记录同
 from datetime import datetime
 
 from sqlalchemy import (
-    Boolean, DateTime, Float, Integer, String, Text, create_engine, event, func, select,
+    Boolean, DateTime, Float, Integer, String, Text, create_engine, event, func, select, text,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, sessionmaker
 
@@ -58,6 +58,8 @@ class Kol(Base):
     video_status: Mapped[str | None] = mapped_column(String(64))
     douyin_id: Mapped[str | None] = mapped_column(String(64), index=True)
     address: Mapped[str | None] = mapped_column(Text)
+    # 是否在最近一次成功同步的文档中出现。False = 文档已删除、本地仍保留（孤儿）。
+    in_doc: Mapped[bool] = mapped_column(Boolean, default=True, server_default=text("1"), index=True)
     updated_at: Mapped[datetime | None] = mapped_column(DateTime)
     created_at: Mapped[datetime | None] = mapped_column(DateTime)
 
@@ -83,6 +85,19 @@ DATA_FIELDS = [
 
 def init_db() -> None:
     Base.metadata.create_all(engine)
+    _migrate_schema()
+
+
+def _migrate_schema() -> None:
+    """轻量迁移：为旧库补充新增列（SQLite）。既有数据默认视为在文档中（in_doc=1）。"""
+    if not _is_sqlite:
+        return
+    with engine.begin() as conn:
+        cols = {row[1] for row in conn.exec_driver_sql("PRAGMA table_info(kol)")}
+        if "in_doc" not in cols:
+            conn.exec_driver_sql(
+                "ALTER TABLE kol ADD COLUMN in_doc BOOLEAN NOT NULL DEFAULT 1"
+            )
 
 
 def _to_float(v):
@@ -166,6 +181,12 @@ def upsert_rows(rows: list[dict]) -> dict:
     inserted = updated = 0
 
     with SessionLocal() as session:
+        # 软标记：本次同步拉到数据时，先把所有已有记录标记为“文档中不存在”，
+        # 随后 upsert 命中的记录再置回 True；本次未出现者保持 False（文档已删除）。
+        # 安全阀：rows 为空（同步异常/权限问题）时跳过标记，避免误标全部。
+        if rows:
+            session.query(Kol).update({Kol.in_doc: False}, synchronize_session=False)
+
         existing_uids = set(session.scalars(select(Kol.uid)).all())
         # 姓名+电话 -> uid 映射，用于查重迁移（兼容历史上用抖音号当 uid 的旧记录）
         key_to_uid: dict[str, str] = {}
@@ -195,12 +216,13 @@ def upsert_rows(rows: list[dict]) -> dict:
             # 版本无关的 upsert：存在则更新（保留 created_at），否则插入
             obj = session.get(Kol, uid)
             if obj is None:
-                session.add(Kol(**data, created_at=now, updated_at=now))
+                session.add(Kol(**data, in_doc=True, created_at=now, updated_at=now))
                 inserted += 1
                 existing_uids.add(uid)
             else:
                 for col, val in update_cols.items():
                     setattr(obj, col, val)
+                obj.in_doc = True  # 本次出现在文档中
                 obj.updated_at = now
                 updated += 1
 
@@ -233,3 +255,57 @@ def get_last_sync() -> dict | None:
 def count_kols() -> int:
     with SessionLocal() as session:
         return session.scalar(select(func.count()).select_from(Kol)) or 0
+
+
+def count_removed() -> int:
+    """文档已移除、本地仍保留（in_doc=False）的博主数。"""
+    with SessionLocal() as session:
+        return session.scalar(
+            select(func.count()).select_from(Kol).where(Kol.in_doc.is_(False))
+        ) or 0
+
+
+def list_removed() -> list[dict]:
+    """列出 in_doc=False 的博主（供管理员确认清理，不脱敏）。"""
+    import photos
+    with SessionLocal() as session:
+        rows = session.scalars(
+            select(Kol).where(Kol.in_doc.is_(False)).order_by(Kol.name.asc())
+        ).all()
+        out = []
+        for r in rows:
+            out.append({
+                "uid": r.uid,
+                "name": r.name or "",
+                "phone": r.phone or "",
+                "has_photo": photos.get_photo_filename(r.uid) is not None,
+                "pkg_count": len(photos.list_package_photos(r.uid)),
+            })
+        return out
+
+
+def delete_kol(uid: str) -> bool:
+    """删除单个博主及其关联（主图 + 包裹图，含文件）。不存在返回 False。"""
+    import photos
+    with SessionLocal() as session:
+        obj = session.get(Kol, uid)
+        if obj is None:
+            return False
+    # 先删关联文件与记录（各自管理 session），再删博主主记录
+    photos.delete_photo(uid)
+    photos.delete_all_package_photos(uid)
+    with SessionLocal() as session:
+        obj = session.get(Kol, uid)
+        if obj is not None:
+            session.delete(obj)
+            session.commit()
+    return True
+
+
+def purge_removed() -> int:
+    """删除全部 in_doc=False 的博主及其关联。返回删除数量。"""
+    with SessionLocal() as session:
+        uids = list(session.scalars(select(Kol.uid).where(Kol.in_doc.is_(False))).all())
+    for uid in uids:
+        delete_kol(uid)
+    return len(uids)

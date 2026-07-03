@@ -106,6 +106,39 @@ export async function deletePackagePhoto(uid: string, id: number): Promise<void>
   await api.delete(`/api/kols/${encodeURIComponent(uid)}/package-photos/${id}`);
 }
 
+// ---------- 文档已移除的博主（软标记 + 手动清理）----------
+
+export interface RemovedKol {
+  uid: string;
+  name: string;
+  phone: string;
+  has_photo: boolean;
+  pkg_count: number;
+}
+
+export async function fetchRemovedKols(): Promise<{ count: number; items: RemovedKol[] }> {
+  const { data } = await api.get<{ count: number; items: RemovedKol[] }>("/api/kols/removed");
+  return data;
+}
+
+export async function fetchRemovedCount(): Promise<number> {
+  try {
+    const { data } = await api.get<{ count: number }>("/api/kols/removed/count");
+    return data.count || 0;
+  } catch {
+    return 0;
+  }
+}
+
+export async function deleteKol(uid: string): Promise<void> {
+  await api.delete(`/api/kols/${encodeURIComponent(uid)}`);
+}
+
+export async function purgeRemovedKols(): Promise<{ deleted: number }> {
+  const { data } = await api.post("/api/kols/removed/purge");
+  return data;
+}
+
 export interface AppSettings {
   kdocs_webhook_url: string;
   kdocs_token: string;

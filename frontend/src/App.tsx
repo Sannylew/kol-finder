@@ -8,6 +8,8 @@ import KolCard from "./components/KolCard";
 import KolDrawer from "./components/KolDrawer";
 import SettingsDialog from "./components/SettingsDialog";
 import ConfirmDialog from "./components/ConfirmDialog";
+import RemovedDialog from "./components/RemovedDialog";
+import { fetchRemovedCount } from "./api";
 
 const PAGE_SIZE = 20;
 
@@ -47,6 +49,13 @@ export default function App() {
   const [confirmLogout, setConfirmLogout] = useState(false);
   const [stats, setStats] = useState<Stats | null>(null);
   const [version, setVersion] = useState("");
+  const [removedCount, setRemovedCount] = useState(0);
+  const [removedOpen, setRemovedOpen] = useState(false);
+
+  function refreshRemovedCount() {
+    if (!getToken()) { setRemovedCount(0); return; }
+    fetchRemovedCount().then(setRemovedCount).catch(() => {});
+  }
 
   function refreshStats() {
     fetchStats().then(setStats).catch(() => {});
@@ -76,6 +85,7 @@ export default function App() {
     reloadList();
     refreshStats();
     refreshOptions();
+    setRemovedCount(0);
     showToast("已退出登录", "ok");
   }
 
@@ -94,6 +104,7 @@ export default function App() {
     refreshPublicConfig();
     refreshStats();
     fetchVersion().then(setVersion).catch(() => {});
+    refreshRemovedCount();
   }, []);
 
   // 筛选变化时回到第一页
@@ -136,6 +147,7 @@ export default function App() {
       setItems(res.items); setTotal(res.total); setPages(res.pages);
       fetchFilterOptions().then(setOptions).catch(() => {});
       refreshStats();
+      refreshRemovedCount();
     } catch (e: any) {
       if (e?.response?.status === 401) {
         showToast("请先登录后台再同步", "err");
@@ -181,6 +193,15 @@ export default function App() {
             </svg>
             立即同步
           </button>
+          {isAdmin && (
+            <button className="btn-icon removed-btn" title="文档已移除的博主" onClick={() => setRemovedOpen(true)}>
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m2 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" />
+                <path d="M10 11v6M14 11v6" />
+              </svg>
+              {removedCount > 0 && <span className="badge-count">{removedCount > 99 ? "99+" : removedCount}</span>}
+            </button>
+          )}
           <button className="btn-icon" title="后台设置" onClick={() => { setIsAdmin(!!getToken()); setSettingsOpen(true); }}>
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <circle cx="12" cy="12" r="3" />
@@ -345,13 +366,14 @@ export default function App() {
 
       <SettingsDialog
         open={settingsOpen}
-        onClose={() => { setSettingsOpen(false); setIsAdmin(!!getToken()); reloadList(); refreshOptions(); refreshStats(); }}
+        onClose={() => { setSettingsOpen(false); setIsAdmin(!!getToken()); reloadList(); refreshOptions(); refreshStats(); refreshRemovedCount(); }}
         onSaved={() => {
           setIsAdmin(!!getToken());
           fetchSyncStatus().then(setSync).catch(() => {});
           refreshPublicConfig();
           refreshStats();
           refreshOptions();
+          refreshRemovedCount();
           // 重新加载列表以应用脱敏
           fetchKols({
             keyword: debKeyword,
@@ -359,6 +381,13 @@ export default function App() {
             size, coop_period: period, company, page, page_size: PAGE_SIZE,
           }).then((res) => { setItems(res.items); setTotal(res.total); setPages(res.pages); }).catch(() => {});
         }}
+      />
+
+      <RemovedDialog
+        open={removedOpen}
+        onClose={() => setRemovedOpen(false)}
+        onChanged={() => { reloadList(); refreshStats(); refreshOptions(); refreshRemovedCount(); }}
+        onToast={showToast}
       />
 
       <footer className="app-footer">
