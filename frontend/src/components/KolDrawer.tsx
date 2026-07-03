@@ -1,6 +1,9 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { Kol } from "../types";
-import { uploadPhoto, deletePhoto } from "../api";
+import {
+  uploadPhoto, deletePhoto,
+  fetchPackagePhotos, uploadPackagePhotos, deletePackagePhoto, type PackagePhoto,
+} from "../api";
 import { copyText } from "../clipboard";
 import { useScrollLock } from "../useScrollLock";
 import ConfirmDialog from "./ConfirmDialog";
@@ -8,6 +11,7 @@ import ConfirmDialog from "./ConfirmDialog";
 interface Props {
   kol: Kol | null;
   masked?: boolean;
+  isAdmin?: boolean;
   onClose: () => void;
   onPhotoChange: (uid: string, photoUrl: string | null) => void;
   onToast: (text: string, type?: "" | "ok" | "err") => void;
@@ -29,13 +33,44 @@ const CheckIcon = () => (
   </svg>
 );
 
-export default function KolDrawer({ kol, masked, onClose, onPhotoChange, onToast }: Props) {
+export default function KolDrawer({ kol, masked, isAdmin, onClose, onPhotoChange, onToast }: Props) {
   const fileRef = useRef<HTMLInputElement>(null);
+  const pkgFileRef = useRef<HTMLInputElement>(null);
   const [busy, setBusy] = useState(false);
   const [copiedKey, setCopiedKey] = useState<string>("");
   const [confirmDel, setConfirmDel] = useState(false);
+  const [pkgPhotos, setPkgPhotos] = useState<PackagePhoto[]>([]);
+  const [pkgBusy, setPkgBusy] = useState(false);
+  const [confirmDelPkg, setConfirmDelPkg] = useState<PackagePhoto | null>(null);
+  const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
   const open = !!kol;
   useScrollLock(open);
+
+  // 打开抽屉/切换博主时加载包裹图；关闭清空
+  useEffect(() => {
+    if (!kol) {
+      setPkgPhotos([]);
+      setLightboxIndex(null);
+      return;
+    }
+    let alive = true;
+    fetchPackagePhotos(kol.uid)
+      .then((list) => { if (alive) setPkgPhotos(list); })
+      .catch(() => { if (alive) setPkgPhotos([]); });
+    return () => { alive = false; };
+  }, [kol?.uid]);
+
+  // 灯箱键盘操作：Esc 关闭，←/→ 切换
+  useEffect(() => {
+    if (lightboxIndex === null) return;
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") setLightboxIndex(null);
+      else if (e.key === "ArrowLeft") setLightboxIndex((i) => (i === null ? i : (i - 1 + pkgPhotos.length) % pkgPhotos.length));
+      else if (e.key === "ArrowRight") setLightboxIndex((i) => (i === null ? i : (i + 1) % pkgPhotos.length));
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [lightboxIndex, pkgPhotos.length]);
 
   function copy(key: string, value: string, label: string) {
     if (!value || value === "—") return;
@@ -76,6 +111,43 @@ export default function KolDrawer({ kol, masked, onClose, onPhotoChange, onToast
       onToast("删除失败：" + (err?.response?.data?.detail || err.message), "err");
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function handlePkgFiles(e: React.ChangeEvent<HTMLInputElement>) {
+    const files = Array.from(e.target.files || []);
+    if (!files.length || !kol) return;
+    setPkgBusy(true);
+    try {
+      const { added, errors } = await uploadPackagePhotos(kol.uid, files);
+      if (added.length) setPkgPhotos((prev) => [...prev, ...added]);
+      if (errors.length) {
+        onToast(`${added.length ? `已添加 ${added.length} 张，` : ""}${errors.length} 张失败：${errors[0].reason}`, added.length ? "ok" : "err");
+      } else {
+        onToast(`已添加 ${added.length} 张包裹图`, "ok");
+      }
+    } catch (err: any) {
+      onToast("上传失败：" + (err?.response?.data?.detail || err.message), "err");
+    } finally {
+      setPkgBusy(false);
+      if (pkgFileRef.current) pkgFileRef.current.value = "";
+    }
+  }
+
+  async function handleDeletePkg() {
+    const target = confirmDelPkg;
+    if (!kol || !target) return;
+    setConfirmDelPkg(null);
+    setPkgBusy(true);
+    try {
+      await deletePackagePhoto(kol.uid, target.id);
+      setPkgPhotos((prev) => prev.filter((p) => p.id !== target.id));
+      setLightboxIndex(null);
+      onToast("包裹图已删除", "ok");
+    } catch (err: any) {
+      onToast("删除失败：" + (err?.response?.data?.detail || err.message), "err");
+    } finally {
+      setPkgBusy(false);
     }
   }
 
@@ -155,6 +227,60 @@ export default function KolDrawer({ kol, masked, onClose, onPhotoChange, onToast
                 </div>
               )}
 
+              <input
+                ref={pkgFileRef}
+                type="file"
+                accept="image/*"
+                multiple
+                style={{ display: "none" }}
+                onChange={handlePkgFiles}
+              />
+              {(isAdmin || pkgPhotos.length > 0) && (
+                <div className="section pkg-section">
+                  <h4>包裹图片{pkgPhotos.length > 0 ? `（${pkgPhotos.length}）` : ""}</h4>
+                  <div className="pkg-grid">
+                    {pkgPhotos.map((p, i) => (
+                      <div className="pkg-thumb" key={p.id}>
+                        <img
+                          src={p.url}
+                          alt="包裹图"
+                          loading="lazy"
+                          onClick={() => setLightboxIndex(i)}
+                          onError={(e) => { (e.currentTarget as HTMLImageElement).style.opacity = "0.25"; }}
+                        />
+                        {isAdmin && (
+                          <button
+                            className="pkg-del"
+                            title="删除这张包裹图"
+                            onClick={() => !pkgBusy && setConfirmDelPkg(p)}
+                          >
+                            ×
+                          </button>
+                        )}
+                      </div>
+                    ))}
+                    {isAdmin && (
+                      <div
+                        className={`pkg-add ${pkgBusy ? "busy" : ""}`}
+                        onClick={() => !pkgBusy && pkgFileRef.current?.click()}
+                        title="添加包裹图"
+                      >
+                        {pkgBusy ? (
+                          <span className="pkg-add-txt">上传中…</span>
+                        ) : (
+                          <>
+                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                              <path d="M12 5v14M5 12h14" />
+                            </svg>
+                            <span className="pkg-add-txt">添加</span>
+                          </>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+
               <div className="section">
                 <h4>联系与资料{masked ? "" : "（点击可复制）"}</h4>
                 <div className="copy-list">
@@ -217,6 +343,45 @@ export default function KolDrawer({ kol, masked, onClose, onPhotoChange, onToast
         onConfirm={handleDelete}
         onCancel={() => setConfirmDel(false)}
       />
+
+      <ConfirmDialog
+        open={!!confirmDelPkg}
+        title="删除包裹图"
+        message="确定删除这张包裹图吗？此操作不可恢复。"
+        confirmText="删除"
+        danger
+        onConfirm={handleDeletePkg}
+        onCancel={() => setConfirmDelPkg(null)}
+      />
+
+      {lightboxIndex !== null && pkgPhotos[lightboxIndex] && (
+        <div className="lightbox-scrim" onClick={() => setLightboxIndex(null)}>
+          <button className="lb-close" onClick={() => setLightboxIndex(null)} title="关闭">×</button>
+          {pkgPhotos.length > 1 && (
+            <button
+              className="lb-nav prev"
+              onClick={(e) => { e.stopPropagation(); setLightboxIndex((i) => (i === null ? i : (i - 1 + pkgPhotos.length) % pkgPhotos.length)); }}
+              title="上一张"
+            >‹</button>
+          )}
+          <img
+            className="lightbox-img"
+            src={pkgPhotos[lightboxIndex].url}
+            alt="包裹图"
+            onClick={(e) => e.stopPropagation()}
+          />
+          {pkgPhotos.length > 1 && (
+            <button
+              className="lb-nav next"
+              onClick={(e) => { e.stopPropagation(); setLightboxIndex((i) => (i === null ? i : (i + 1) % pkgPhotos.length)); }}
+              title="下一张"
+            >›</button>
+          )}
+          {pkgPhotos.length > 1 && (
+            <div className="lb-counter">{lightboxIndex + 1} / {pkgPhotos.length}</div>
+          )}
+        </div>
+      )}
     </>
   );
 }

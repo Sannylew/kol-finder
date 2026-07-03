@@ -22,6 +22,7 @@ venv/
 # 前端依赖与构建产物
 node_modules/
 frontend/dist/
+*.tsbuildinfo
 
 # 备份
 backend/backups/

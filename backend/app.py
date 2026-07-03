@@ -47,6 +47,7 @@ async def lifespan(app: FastAPI):
     # 启动：建表 + 启动定时任务
     db.init_db()
     photos.init_photo_table()
+    photos.init_package_photo_table()
     settings_store.init_settings_table()
     auth.init_auth()
     interval = settings_store.get_sync_interval()
@@ -183,6 +184,77 @@ def delete_photo(uid: str, _user: str = Depends(auth.verify_token)):
     ok = photos.delete_photo(uid)
     if not ok:
         raise HTTPException(status_code=404, detail="该博主没有照片")
+    return {"ok": True}
+
+
+@app.get("/api/kols/{uid}/package-photos")
+def list_package_photos(uid: str):
+    """某博主的包裹图列表（访客可见，不脱敏）。"""
+    items = [
+        {"id": p["id"], "url": f"/uploads/{p['filename']}"}
+        for p in photos.list_package_photos(uid)
+    ]
+    return {"items": items}
+
+
+@app.post("/api/kols/{uid}/package-photos")
+async def upload_package_photos(
+    uid: str,
+    files: list[UploadFile] = File(...),
+    _user: str = Depends(auth.verify_token),
+):
+    """给博主上传一张或多张包裹图（追加）。需登录。
+
+    逐张独立校验：单个失败计入 errors，不中断其余；超上限的部分被拒并提示。
+    """
+    if not queries.get_kol(uid):
+        raise HTTPException(status_code=404, detail="未找到该博主")
+
+    max_bytes = photos.MAX_BYTES
+    remaining = photos.MAX_PACKAGE_PHOTOS - photos.count_package_photos(uid)
+    added: list[dict] = []
+    errors: list[dict] = []
+
+    for f in files:
+        name = f.filename or "photo.jpg"
+        if remaining <= 0:
+            errors.append({"name": name, "reason": f"已达上限（最多 {photos.MAX_PACKAGE_PHOTOS} 张）"})
+            continue
+        # 分块读取并限制大小，避免超大文件撑爆内存
+        chunks = []
+        read = 0
+        too_big = False
+        while True:
+            chunk = await f.read(1024 * 1024)
+            if not chunk:
+                break
+            read += len(chunk)
+            if read > max_bytes:
+                too_big = True
+                break
+            chunks.append(chunk)
+        if too_big:
+            errors.append({"name": name, "reason": "图片过大，最大 10MB"})
+            continue
+        content = b"".join(chunks)
+        try:
+            info = photos.save_package_photo(uid, name, content)
+            added.append({"id": info["id"], "url": f"/uploads/{info['filename']}"})
+            remaining -= 1
+        except ValueError as e:
+            errors.append({"name": name, "reason": str(e)})
+
+    if added:
+        logger.info("上传包裹图 by=%s uid=%s: +%d, 失败 %d", _user, uid, len(added), len(errors))
+    return {"ok": True, "added": added, "errors": errors}
+
+
+@app.delete("/api/kols/{uid}/package-photos/{photo_id}")
+def delete_package_photo(uid: str, photo_id: int, _user: str = Depends(auth.verify_token)):
+    """删除某博主的一张包裹图。需登录。"""
+    ok = photos.delete_package_photo(uid, photo_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="未找到该包裹图")
     return {"ok": True}
 
 

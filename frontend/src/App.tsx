@@ -326,6 +326,7 @@ export default function App() {
       <KolDrawer
         kol={selected}
         masked={effectiveMask}
+        isAdmin={isAdmin}
         onClose={() => setSelected(null)}
         onPhotoChange={handlePhotoChange}
         onToast={showToast}

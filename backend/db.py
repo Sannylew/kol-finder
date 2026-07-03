@@ -130,7 +130,7 @@ def _normalize(row: dict) -> dict:
 
 def _migrate_uid(session, old_uid: str, new_uid: str) -> None:
     """把旧 uid 的关联数据迁移到新 uid（用于同一人补填抖音号导致 uid 变化的情况）。
-    迁移内容：照片(kol_photo)。随后删除旧的 kol 记录，由新 uid 的 upsert 接管。
+    迁移内容：主图(kol_photo) + 包裹图(kol_package_photo)。随后删除旧的 kol 记录，由新 uid 的 upsert 接管。
     """
     if old_uid == new_uid:
         return
@@ -146,6 +146,11 @@ def _migrate_uid(session, old_uid: str, new_uid: str) -> None:
             text("UPDATE kol_photo SET uid = :new WHERE uid = :old"),
             {"new": new_uid, "old": old_uid},
         )
+    # 迁移包裹图（一对多，无唯一冲突，直接整体改 uid）
+    session.execute(
+        text("UPDATE kol_package_photo SET uid = :new WHERE uid = :old"),
+        {"new": new_uid, "old": old_uid},
+    )
     # 删除旧的博主记录
     session.execute(text("DELETE FROM kol WHERE uid = :u"), {"u": old_uid})
 

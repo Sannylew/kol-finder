@@ -74,6 +74,38 @@ export async function deletePhoto(uid: string): Promise<void> {
   await api.delete(`/api/kols/${encodeURIComponent(uid)}/photo`);
 }
 
+// ---------- 包裹图（每人多张）----------
+
+export interface PackagePhoto {
+  id: number;
+  url: string;
+}
+
+export async function fetchPackagePhotos(uid: string): Promise<PackagePhoto[]> {
+  const { data } = await api.get<{ items: PackagePhoto[] }>(
+    `/api/kols/${encodeURIComponent(uid)}/package-photos`
+  );
+  return data.items;
+}
+
+export async function uploadPackagePhotos(
+  uid: string,
+  files: File[]
+): Promise<{ added: PackagePhoto[]; errors: { name: string; reason: string }[] }> {
+  const form = new FormData();
+  files.forEach((f) => form.append("files", f));
+  const { data } = await api.post(
+    `/api/kols/${encodeURIComponent(uid)}/package-photos`,
+    form,
+    { headers: { "Content-Type": "multipart/form-data" } }
+  );
+  return { added: data.added || [], errors: data.errors || [] };
+}
+
+export async function deletePackagePhoto(uid: string, id: number): Promise<void> {
+  await api.delete(`/api/kols/${encodeURIComponent(uid)}/package-photos/${id}`);
+}
+
 export interface AppSettings {
   kdocs_webhook_url: string;
   kdocs_token: string;
