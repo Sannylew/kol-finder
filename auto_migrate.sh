@@ -64,7 +64,12 @@ fi
 git remote set-url origin "$REPO_URL"
 
 # 4) 取出迁移脚本（确保用最新版）
-git checkout -f "origin/$BRANCH" -- scripts/migrate_to_sqlite.sh backend/migrate_photos.py
+#    zip 部署接管为 git 后，源码文件是"未跟踪"状态，直接 checkout 会因冲突中止；
+#    用 checkout -f 覆盖这两个特定文件即可（-- <path> 形式会强制覆盖工作区该文件）。
+git checkout -f "origin/$BRANCH" -- scripts/migrate_to_sqlite.sh backend/migrate_photos.py 2>/dev/null || {
+  # 兜底：先把工作区对齐远程（.env/kol.db/uploads 等已被 .gitignore 保护，不受影响）
+  git reset -q --hard "origin/$BRANCH"
+}
 chmod +x scripts/*.sh 2>/dev/null || true
 
 # 5) 运行迁移（全自动，含停 PG）

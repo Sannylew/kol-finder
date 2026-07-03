@@ -101,8 +101,12 @@ _git_fetch() {
   return 1
 }
 _git_fetch || fail "拉取代码失败（网络问题）。可稍后重试，或手动 git fetch 后重跑本脚本"
-git -C "$PROJECT_DIR" checkout -f "$BRANCH"
-git -C "$PROJECT_DIR" pull --ff-only origin "$BRANCH" 2>/dev/null || true
+# 用 reset --hard 对齐远程分支：兼容 zip 部署接管（源码为未跟踪文件，普通 checkout 会因冲突中止；
+# reset --hard 会用远程内容覆盖工作区）。.env / kol.db / uploads / backups / venv / node_modules
+# 均在 .gitignore 中，为未跟踪且被忽略，reset 不会删除它们。
+git -C "$PROJECT_DIR" reset -q --hard "origin/$BRANCH" || fail "切换到最新代码失败，请检查 git 状态"
+# 建立本地分支跟踪，便于后续 update.sh 正常 pull
+git -C "$PROJECT_DIR" checkout -B "$BRANCH" "origin/$BRANCH" 2>/dev/null || true
 
 # 3) 后端依赖 + 重启（自动建 kol.db）
 step "更新后端依赖并重启"
