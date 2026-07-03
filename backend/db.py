@@ -60,6 +60,8 @@ class Kol(Base):
     address: Mapped[str | None] = mapped_column(Text)
     # 是否在最近一次成功同步的文档中出现。False = 文档已删除、本地仍保留（孤儿）。
     in_doc: Mapped[bool] = mapped_column(Boolean, default=True, server_default=text("1"), index=True)
+    # 展示优先级：数字越低越靠前，NULL=未设置（排在已设置者之后）。本地附加，同步不覆盖。
+    priority: Mapped[int | None] = mapped_column(Integer, index=True)
     updated_at: Mapped[datetime | None] = mapped_column(DateTime)
     created_at: Mapped[datetime | None] = mapped_column(DateTime)
 
@@ -97,6 +99,10 @@ def _migrate_schema() -> None:
         if "in_doc" not in cols:
             conn.exec_driver_sql(
                 "ALTER TABLE kol ADD COLUMN in_doc BOOLEAN NOT NULL DEFAULT 1"
+            )
+        if "priority" not in cols:
+            conn.exec_driver_sql(
+                "ALTER TABLE kol ADD COLUMN priority INTEGER"
             )
 
 
@@ -150,7 +156,6 @@ def _migrate_uid(session, old_uid: str, new_uid: str) -> None:
     if old_uid == new_uid:
         return
     # 迁移照片：若新 uid 还没有照片，则把旧 uid 的照片移过来；否则删除旧照片记录
-    from sqlalchemy import text
     has_new_photo = session.execute(
         text("SELECT 1 FROM kol_photo WHERE uid = :u"), {"u": new_uid}
     ).first()
@@ -284,28 +289,118 @@ def list_removed() -> list[dict]:
         return out
 
 
-def delete_kol(uid: str) -> bool:
-    """删除单个博主及其关联（主图 + 包裹图，含文件）。不存在返回 False。"""
+def _delete_kol_in_session(session, uid: str) -> list[str]:
+    """在给定 session 内删除博主及其主图/包裹图的数据库记录。
+    返回需要删除的磁盘文件名列表（由调用方在提交后统一清理，保证 DB 与文件一致）。
+    博主不存在返回 None。"""
     import photos
+    obj = session.get(Kol, uid)
+    if obj is None:
+        return None
+
+    files: list[str] = []
+
+    # 主图记录
+    main = session.get(photos.KolPhoto, uid)
+    if main is not None:
+        files.append(main.filename)
+        session.delete(main)
+
+    # 包裹图记录
+    pkgs = session.scalars(
+        select(photos.KolPackagePhoto).where(photos.KolPackagePhoto.uid == uid)
+    ).all()
+    for p in pkgs:
+        files.append(p.filename)
+        session.delete(p)
+
+    session.delete(obj)
+    return files
+
+
+def _unlink_files(filenames: list[str]) -> None:
+    """删除 uploads 目录下的文件，忽略缺失/错误。"""
+    import photos
+    for fn in filenames:
+        if not fn:
+            continue
+        path = photos.UPLOAD_DIR / fn
+        try:
+            path.unlink(missing_ok=True)
+        except OSError:
+            pass
+
+
+def delete_kol(uid: str) -> bool:
+    """删除单个博主及其关联（主图 + 包裹图，含文件）。不存在返回 False。
+    数据库记录在单个事务内删除，提交成功后再清理磁盘文件，避免 DB 与文件不一致。"""
     with SessionLocal() as session:
-        obj = session.get(Kol, uid)
-        if obj is None:
+        files = _delete_kol_in_session(session, uid)
+        if files is None:
             return False
-    # 先删关联文件与记录（各自管理 session），再删博主主记录
-    photos.delete_photo(uid)
-    photos.delete_all_package_photos(uid)
-    with SessionLocal() as session:
-        obj = session.get(Kol, uid)
-        if obj is not None:
-            session.delete(obj)
-            session.commit()
+        session.commit()
+    _unlink_files(files)
     return True
 
 
 def purge_removed() -> int:
-    """删除全部 in_doc=False 的博主及其关联。返回删除数量。"""
+    """删除全部 in_doc=False 的博主及其关联。返回删除数量。
+    所有记录在单事务内删除，提交成功后统一清理文件。"""
     with SessionLocal() as session:
         uids = list(session.scalars(select(Kol.uid).where(Kol.in_doc.is_(False))).all())
-    for uid in uids:
-        delete_kol(uid)
+        all_files: list[str] = []
+        for uid in uids:
+            files = _delete_kol_in_session(session, uid)
+            if files:
+                all_files.extend(files)
+        session.commit()
+    _unlink_files(all_files)
     return len(uids)
+
+
+def set_priority(uid: str, value: int | None) -> bool:
+    """设置或清空博主优先级（value=None 清空）。命中返回 True，博主不存在返回 False。"""
+    with SessionLocal() as session:
+        obj = session.get(Kol, uid)
+        if obj is None:
+            return False
+        obj.priority = value
+        session.commit()
+    return True
+
+
+def pin_kol(uid: str) -> int | None:
+    """置顶：设为当前最小非空 priority - 1（无则 1）。返回新 priority；博主不存在返回 None 且不改动。"""
+    with SessionLocal() as session:
+        obj = session.get(Kol, uid)
+        if obj is None:
+            return None
+        min_p = session.scalar(
+            select(func.min(Kol.priority)).where(Kol.priority.isnot(None))
+        )
+        # 无已设置优先级则用 1；否则设为比当前最小更靠前（最低到 0）
+        new_val = 1 if min_p is None else max(0, min_p - 1)
+        obj.priority = new_val
+        session.commit()
+        return new_val
+
+
+def unpin_kol(uid: str) -> bool:
+    """取消置顶：清空 priority。命中返回 True，博主不存在返回 False。"""
+    return set_priority(uid, None)
+
+
+def list_sync_logs(limit: int = 50) -> list[dict]:
+    """历史同步记录，按时间倒序。"""
+    limit = min(max(1, limit), 500)
+    with SessionLocal() as session:
+        rows = session.scalars(
+            select(SyncLog).order_by(SyncLog.id.desc()).limit(limit)
+        ).all()
+        return [{
+            "synced_at": r.synced_at.isoformat(timespec="seconds"),
+            "total": r.total,
+            "inserted": r.inserted,
+            "updated": r.updated,
+            "message": r.message,
+        } for r in rows]

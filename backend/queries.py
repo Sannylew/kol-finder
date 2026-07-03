@@ -1,7 +1,7 @@
 """
 达人数据查询层：分页、搜索、筛选、统计。全部在数据库做，支持大数据量。
 """
-from sqlalchemy import func, or_, select
+from sqlalchemy import case, func, or_, select
 
 from db import Kol, SessionLocal
 import photos
@@ -43,7 +43,7 @@ def _apply_mask(row: dict) -> dict:
     # 完全保留明文的字段（识别 + 系统字段 + 身材数据）
     keep_plain = {
         "uid", "name", "has_contract", "photo_url", "updated_at",
-        "height", "weight", "bust", "waist", "hip",
+        "height", "weight", "bust", "waist", "hip", "priority",
     }
     # 用专门规则部分遮罩的字段
     out = dict(row)
@@ -88,6 +88,7 @@ def _row_to_dict(k: Kol) -> dict:
         "video_status": k.video_status,
         "douyin_id": k.douyin_id,
         "address": k.address,
+        "priority": k.priority,
         "updated_at": k.updated_at.isoformat(timespec="seconds") if k.updated_at else None,
     }
 
@@ -96,9 +97,10 @@ def _photo_url(filename: str | None) -> str | None:
     return f"/uploads/{filename}" if filename else None
 
 
-# 允许的排序字段白名单
+# 允许的排序字段白名单（单列排序）。
+# 注意："priority" 与 "seq" 走下方专门的复合排序分支，不在此表内。
 SORTABLE = {
-    "seq": Kol.seq, "name": Kol.name, "group_date": Kol.group_date,
+    "name": Kol.name, "group_date": Kol.group_date,
     "height": Kol.height, "weight": Kol.weight, "updated_at": Kol.updated_at,
 }
 
@@ -161,9 +163,20 @@ def list_kols(
         ) or 0
 
         # 排序
-        col = SORTABLE.get(sort_by, Kol.seq)
-        col = col.desc() if order.lower() == "desc" else col.asc()
-        stmt = stmt.order_by(col).offset((page - 1) * page_size).limit(page_size)
+        if sort_by in ("priority", "seq"):
+            # 默认排序：有优先级者在前（priority 升序，数字越低越前），NULL 排最后，
+            # 再按 seq；seq 也可能为 NULL，最后用 uid 兜底，保证分页顺序完全确定。
+            priority_null_last = case((Kol.priority.is_(None), 1), else_=0)
+            seq_null_last = case((Kol.seq.is_(None), 1), else_=0)
+            stmt = stmt.order_by(
+                priority_null_last.asc(), Kol.priority.asc(),
+                seq_null_last.asc(), Kol.seq.asc(), Kol.uid.asc(),
+            )
+        else:
+            col = SORTABLE.get(sort_by, Kol.seq)
+            col = col.desc() if order.lower() == "desc" else col.asc()
+            stmt = stmt.order_by(col, Kol.uid.asc())
+        stmt = stmt.offset((page - 1) * page_size).limit(page_size)
 
         rows = session.scalars(stmt).all()
         items = [_row_to_dict(k) for k in rows]

@@ -16,6 +16,7 @@ DEFAULTS = {
     "sync_interval_seconds": str(config.SYNC_INTERVAL_SECONDS),
     "auto_sync_enabled": "1",  # 自动同步总开关：1=开
     "mask_enabled": "0",  # 前端脱敏开关：1=开（只显示姓名+照片）
+    "company_name": "",  # 公司名称（显示在左上角品牌区，公开可见）
 }
 
 SECRET_KEYS = {"kdocs_token"}  # 返回前端时遮罩
@@ -88,3 +89,7 @@ def is_mask_enabled() -> bool:
 
 def is_auto_sync_enabled() -> bool:
     return str(get("auto_sync_enabled")).strip() in {"1", "true", "True"}
+
+
+def get_company_name() -> str:
+    return str(get("company_name") or "").strip()

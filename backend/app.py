@@ -24,7 +24,7 @@ import auth
 import maintenance
 from logging_setup import setup_logging
 from kdocs_client import KdocsClient, KdocsError
-from sync import sync_once, build_client
+from sync import sync_once
 
 setup_logging()
 logger = logging.getLogger("kol.api")
@@ -113,11 +113,11 @@ def list_kols(
     company: str = "",
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=200),
-    sort_by: str = "seq",
+    sort_by: str = "priority",
     order: str = "asc",
     logged_in: bool = Depends(auth.is_logged_in),
 ):
-    """达人列表：分页 + 搜索 + 筛选 + 排序。管理员登录则不脱敏。"""
+    """达人列表：分页 + 搜索 + 筛选 + 排序。默认按优先级。管理员登录则不脱敏。"""
     return queries.list_kols(
         keyword=keyword,
         has_contract=has_contract,
@@ -171,6 +171,48 @@ def delete_kol(uid: str, _user: str = Depends(auth.verify_token)):
         raise HTTPException(status_code=404, detail="未找到该博主")
     logger.warning("删除博主 by=%s: uid=%s", _user, uid)
     return {"ok": True}
+
+
+@app.put("/api/kols/{uid}/priority")
+def set_kol_priority(uid: str, payload: dict, _user: str = Depends(auth.verify_token)):
+    """设置或清空博主优先级（数字越低越靠前，null 清空）。需登录。"""
+    raw = (payload or {}).get("priority", None)
+    value: int | None
+    if raw is None or raw == "":
+        value = None
+    else:
+        try:
+            value = int(raw)
+        except (TypeError, ValueError):
+            raise HTTPException(status_code=400, detail="优先级必须是整数")
+        if value < 0:
+            raise HTTPException(status_code=400, detail="优先级不能为负数")
+    if not db.set_priority(uid, value):
+        raise HTTPException(status_code=404, detail="未找到该博主")
+    return {"ok": True, "priority": value}
+
+
+@app.post("/api/kols/{uid}/pin")
+def pin_kol(uid: str, _user: str = Depends(auth.verify_token)):
+    """置顶：设为当前最靠前的优先级。需登录。"""
+    val = db.pin_kol(uid)
+    if val is None:
+        raise HTTPException(status_code=404, detail="未找到该博主")
+    return {"ok": True, "priority": val}
+
+
+@app.delete("/api/kols/{uid}/pin")
+def unpin_kol(uid: str, _user: str = Depends(auth.verify_token)):
+    """取消置顶：清空优先级。需登录。"""
+    if not db.unpin_kol(uid):
+        raise HTTPException(status_code=404, detail="未找到该博主")
+    return {"ok": True, "priority": None}
+
+
+@app.get("/api/sync-logs")
+def get_sync_logs(limit: int = Query(50, ge=1, le=500), _user: str = Depends(auth.verify_token)):
+    """历史同步记录（倒序）。需登录。"""
+    return {"items": db.list_sync_logs(limit)}
 
 
 @app.get("/api/stats")
@@ -311,8 +353,11 @@ def auth_change_password(payload: dict, _user: str = Depends(auth.verify_token))
 
 @app.get("/api/public-config")
 def public_config():
-    """无需登录的前端配置：当前是否脱敏。"""
-    return {"mask_enabled": settings_store.is_mask_enabled()}
+    """无需登录的前端配置：当前是否脱敏、公司名称。"""
+    return {
+        "mask_enabled": settings_store.is_mask_enabled(),
+        "company_name": settings_store.get_company_name(),
+    }
 
 
 @app.get("/api/settings")
@@ -324,7 +369,7 @@ def get_settings(_user: str = Depends(auth.verify_token)):
 @app.put("/api/settings")
 def update_settings(payload: dict, _user: str = Depends(auth.verify_token)):
     """更新后台配置。token 传空表示不修改。修改间隔会重排定时任务。需登录。"""
-    allowed = {"kdocs_webhook_url", "kdocs_token", "sync_interval_seconds", "mask_enabled", "auto_sync_enabled"}
+    allowed = {"kdocs_webhook_url", "kdocs_token", "sync_interval_seconds", "mask_enabled", "auto_sync_enabled", "company_name"}
     items = {k: v for k, v in payload.items() if k in allowed}
 
     # 校验同步间隔

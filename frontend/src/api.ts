@@ -20,6 +20,22 @@ api.interceptors.request.use((cfg) => {
   return cfg;
 });
 
+// 401（登录过期/失效）：在后台页面下清除 token 并跳转登录
+api.interceptors.response.use(
+  (resp) => resp,
+  (error) => {
+    const status = error?.response?.status;
+    if (status === 401 && typeof window !== "undefined") {
+      const path = window.location.pathname;
+      if (path.startsWith("/admin") && path !== "/admin/login") {
+        clearToken();
+        window.location.assign("/admin/login");
+      }
+    }
+    return Promise.reject(error);
+  }
+);
+
 export interface ListParams {
   keyword?: string;
   has_contract?: boolean;
@@ -139,11 +155,42 @@ export async function purgeRemovedKols(): Promise<{ deleted: number }> {
   return data;
 }
 
+// ---------- 优先级 / 置顶 ----------
+
+export async function setKolPriority(uid: string, priority: number | null): Promise<void> {
+  await api.put(`/api/kols/${encodeURIComponent(uid)}/priority`, { priority });
+}
+
+export async function pinKol(uid: string): Promise<{ priority: number | null }> {
+  const { data } = await api.post(`/api/kols/${encodeURIComponent(uid)}/pin`);
+  return data;
+}
+
+export async function unpinKol(uid: string): Promise<void> {
+  await api.delete(`/api/kols/${encodeURIComponent(uid)}/pin`);
+}
+
+// ---------- 同步记录 ----------
+
+export interface SyncLogItem {
+  synced_at: string;
+  total: number;
+  inserted: number;
+  updated: number;
+  message: string;
+}
+
+export async function fetchSyncLogs(limit = 50): Promise<SyncLogItem[]> {
+  const { data } = await api.get<{ items: SyncLogItem[] }>("/api/sync-logs", { params: { limit } });
+  return data.items;
+}
+
 export interface AppSettings {
   kdocs_webhook_url: string;
   kdocs_token: string;
   kdocs_token_set?: boolean;
   sync_interval_seconds: string;
+  company_name?: string;
 }
 
 export async function fetchSettings(): Promise<AppSettings> {
@@ -170,7 +217,7 @@ export async function changePassword(old_password: string, new_password: string)
   await api.post("/api/auth/change-password", { old_password, new_password });
 }
 
-export async function fetchPublicConfig(): Promise<{ mask_enabled: boolean }> {
+export async function fetchPublicConfig(): Promise<{ mask_enabled: boolean; company_name?: string }> {
   const { data } = await api.get("/api/public-config");
   return data;
 }

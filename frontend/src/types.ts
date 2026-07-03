@@ -18,6 +18,7 @@ export interface Kol {
   video_status: string | null;
   douyin_id: string | null;
   address: string | null;
+  priority: number | null;
   updated_at: string | null;
   photo_url: string | null;
 }

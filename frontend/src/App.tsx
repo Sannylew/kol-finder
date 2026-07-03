@@ -1,15 +1,12 @@
 import { useEffect, useMemo, useState } from "react";
-import type { Kol, FilterOptions, SyncStatus } from "./types";
+import { Link } from "react-router-dom";
+import type { Kol, FilterOptions } from "./types";
 import {
-  fetchKols, fetchFilterOptions, fetchSyncStatus, triggerSync, fetchPublicConfig, getToken, clearToken,
+  fetchKols, fetchFilterOptions, fetchPublicConfig, getToken,
   fetchStats, type Stats, fetchVersion,
 } from "./api";
 import KolCard from "./components/KolCard";
 import KolDrawer from "./components/KolDrawer";
-import SettingsDialog from "./components/SettingsDialog";
-import ConfirmDialog from "./components/ConfirmDialog";
-import RemovedDialog from "./components/RemovedDialog";
-import { fetchRemovedCount } from "./api";
 
 const PAGE_SIZE = 20;
 
@@ -38,36 +35,23 @@ export default function App() {
   const [error, setError] = useState("");
 
   const [options, setOptions] = useState<FilterOptions>({ sizes: [], coop_periods: [], companies: [] });
-  const [sync, setSync] = useState<SyncStatus | null>(null);
-  const [syncing, setSyncing] = useState(false);
   const [selected, setSelected] = useState<Kol | null>(null);
   const [toast, setToast] = useState<{ text: string; type: "" | "ok" | "err" }>({ text: "", type: "" });
-  const [settingsOpen, setSettingsOpen] = useState(false);
   const [masked, setMasked] = useState(false);
+  const [companyName, setCompanyName] = useState("");
   const [configLoaded, setConfigLoaded] = useState(false);
-  const [isAdmin, setIsAdmin] = useState(!!getToken());
-  const [confirmLogout, setConfirmLogout] = useState(false);
   const [stats, setStats] = useState<Stats | null>(null);
   const [version, setVersion] = useState("");
-  const [removedCount, setRemovedCount] = useState(0);
-  const [removedOpen, setRemovedOpen] = useState(false);
 
-  function refreshRemovedCount() {
-    if (!getToken()) { setRemovedCount(0); return; }
-    fetchRemovedCount().then(setRemovedCount).catch(() => {});
-  }
+  const isAdmin = !!getToken();
 
   function refreshStats() {
     fetchStats().then(setStats).catch(() => {});
   }
 
-  function refreshOptions() {
-    fetchFilterOptions().then(setOptions).catch(() => {});
-  }
-
   function refreshPublicConfig() {
     fetchPublicConfig()
-      .then((c) => setMasked(!!c.mask_enabled))
+      .then((c) => { setMasked(!!c.mask_enabled); setCompanyName(c.company_name || ""); })
       .catch(() => {})
       .finally(() => setConfigLoaded(true));
   }
@@ -77,34 +61,12 @@ export default function App() {
     setTimeout(() => setToast({ text: "", type: "" }), 1800);
   }
 
-  function handleLogout() {
-    setConfirmLogout(false);
-    clearToken();
-    setIsAdmin(false);
-    refreshPublicConfig();
-    reloadList();
-    refreshStats();
-    refreshOptions();
-    setRemovedCount(0);
-    showToast("已退出登录", "ok");
-  }
-
-  function reloadList() {
-    fetchKols({
-      keyword: debKeyword,
-      has_contract: contract === "" ? undefined : contract === "yes",
-      size, coop_period: period, company, page, page_size: PAGE_SIZE,
-    }).then((res) => { setItems(res.items); setTotal(res.total); setPages(res.pages); }).catch(() => {});
-  }
-
-  // 初始化筛选项 + 同步状态
+  // 初始化
   useEffect(() => {
     fetchFilterOptions().then(setOptions).catch(() => {});
-    fetchSyncStatus().then(setSync).catch(() => {});
     refreshPublicConfig();
     refreshStats();
     fetchVersion().then(setVersion).catch(() => {});
-    refreshRemovedCount();
   }, []);
 
   // 筛选变化时回到第一页
@@ -132,44 +94,10 @@ export default function App() {
       .finally(() => setLoading(false));
   }, [debKeyword, contract, size, period, company, page]);
 
-  async function handleSync() {
-    setSyncing(true);
-    try {
-      await triggerSync();
-      const s = await fetchSyncStatus();
-      setSync(s);
-      // 重新加载当前页
-      const res = await fetchKols({
-        keyword: debKeyword,
-        has_contract: contract === "" ? undefined : contract === "yes",
-        size, coop_period: period, company, page, page_size: PAGE_SIZE,
-      });
-      setItems(res.items); setTotal(res.total); setPages(res.pages);
-      fetchFilterOptions().then(setOptions).catch(() => {});
-      refreshStats();
-      refreshRemovedCount();
-    } catch (e: any) {
-      if (e?.response?.status === 401) {
-        showToast("请先登录后台再同步", "err");
-        setSettingsOpen(true);
-      } else {
-        showToast("同步失败：" + (e?.response?.data?.detail || e.message), "err");
-      }
-    } finally {
-      setSyncing(false);
-    }
-  }
-
   function handlePhotoChange(uid: string, photoUrl: string | null) {
     setItems((prev) => prev.map((k) => (k.uid === uid ? { ...k, photo_url: photoUrl } : k)));
     setSelected((prev) => (prev && prev.uid === uid ? { ...prev, photo_url: photoUrl } : prev));
   }
-
-  const lastSyncText = useMemo(() => {
-    if (!sync?.last_sync) return "尚未同步";
-    const t = new Date(sync.last_sync.synced_at);
-    return `上次同步 ${t.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}`;
-  }, [sync]);
 
   const pageButtons = useMemo(() => buildPages(page, pages), [page, pages]);
   const effectiveMask = masked && !isAdmin;
@@ -179,42 +107,15 @@ export default function App() {
       <header>
         <div className="brand">
           <span className="mark">KOL <em>Finder</em></span>
-          <span className="sub">Blogger Atelier</span>
+          {configLoaded && companyName && <span className="company-badge">{companyName}</span>}
         </div>
         <div className="sync">
-          <span className="status">
-            <span className={`dot ${syncing ? "syncing" : ""}`} />
-            {syncing ? "同步中…" : lastSyncText}
-          </span>
-          <button className="btn-sync" onClick={handleSync} disabled={syncing}>
-            <svg className={syncing ? "spin" : ""} width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4">
-              <path d="M23 4v6h-6M1 20v-6h6" />
-              <path d="M3.5 9a9 9 0 0 1 14.8-3.4L23 10M1 14l4.7 4.4A9 9 0 0 0 20.5 15" />
-            </svg>
-            立即同步
-          </button>
-          {isAdmin && (
-            <button className="btn-icon removed-btn" title="文档已移除的博主" onClick={() => setRemovedOpen(true)}>
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m2 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" />
-                <path d="M10 11v6M14 11v6" />
-              </svg>
-              {removedCount > 0 && <span className="badge-count">{removedCount > 99 ? "99+" : removedCount}</span>}
-            </button>
-          )}
-          <button className="btn-icon" title="后台设置" onClick={() => { setIsAdmin(!!getToken()); setSettingsOpen(true); }}>
+          <Link className="btn-icon" to="/admin" title="进入后台">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <circle cx="12" cy="12" r="3" />
               <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
             </svg>
-          </button>
-          {isAdmin && (
-            <button className="btn-icon logout" title="退出登录" onClick={() => setConfirmLogout(true)}>
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9" />
-              </svg>
-            </button>
-          )}
+          </Link>
         </div>
       </header>
 
@@ -223,7 +124,7 @@ export default function App() {
         <p className="lead">
           {!configLoaded ? (
             <>数据来自在线文档，仅读取不修改</>
-          ) : (masked && !isAdmin) ? (
+          ) : effectiveMask ? (
             <>已同步 <b>**</b> 位博主 · 数据来自在线文档，仅读取不修改</>
           ) : (
             <>已同步 <b>{total}</b> 位博主 · 数据来自在线文档，仅读取不修改</>
@@ -353,42 +254,6 @@ export default function App() {
         onToast={showToast}
       />
       <div className={`toast ${toast.type} ${toast.text ? "show" : ""}`}>{toast.text}</div>
-
-      <ConfirmDialog
-        open={confirmLogout}
-        title="退出登录"
-        message="确定要退出后台管理登录吗？"
-        confirmText="退出"
-        danger
-        onConfirm={handleLogout}
-        onCancel={() => setConfirmLogout(false)}
-      />
-
-      <SettingsDialog
-        open={settingsOpen}
-        onClose={() => { setSettingsOpen(false); setIsAdmin(!!getToken()); reloadList(); refreshOptions(); refreshStats(); refreshRemovedCount(); }}
-        onSaved={() => {
-          setIsAdmin(!!getToken());
-          fetchSyncStatus().then(setSync).catch(() => {});
-          refreshPublicConfig();
-          refreshStats();
-          refreshOptions();
-          refreshRemovedCount();
-          // 重新加载列表以应用脱敏
-          fetchKols({
-            keyword: debKeyword,
-            has_contract: contract === "" ? undefined : contract === "yes",
-            size, coop_period: period, company, page, page_size: PAGE_SIZE,
-          }).then((res) => { setItems(res.items); setTotal(res.total); setPages(res.pages); }).catch(() => {});
-        }}
-      />
-
-      <RemovedDialog
-        open={removedOpen}
-        onClose={() => setRemovedOpen(false)}
-        onChanged={() => { reloadList(); refreshStats(); refreshOptions(); refreshRemovedCount(); }}
-        onToast={showToast}
-      />
 
       <footer className="app-footer">
         <span className="mark">KOL Finder</span>
