@@ -42,7 +42,7 @@ def _apply_mask(row: dict) -> dict:
     """
     # 完全保留明文的字段（识别 + 系统字段 + 身材数据）
     keep_plain = {
-        "uid", "name", "has_contract", "photo_url", "updated_at",
+        "uid", "name", "has_contract", "photo_url", "photo_thumb_url", "updated_at",
         "height", "weight", "bust", "waist", "hip", "priority",
     }
     # 用专门规则部分遮罩的字段
@@ -97,6 +97,10 @@ def _photo_url(filename: str | None) -> str | None:
     return f"/uploads/{filename}" if filename else None
 
 
+def _photo_thumb_url(filename: str | None) -> str | None:
+    return photos.thumb_url(filename, generate=False) if filename else None
+
+
 # 允许的排序字段白名单（单列排序）。
 # 注意："priority" 与 "seq" 走下方专门的复合排序分支，不在此表内。
 SORTABLE = {
@@ -120,7 +124,7 @@ def list_kols(
 ) -> dict:
     """分页查询达人列表。privileged=True（已登录管理员）时不脱敏。"""
     page = max(1, page)
-    page_size = min(max(1, page_size), 200)
+    page_size = min(max(1, page_size), 1000)
 
     with SessionLocal() as session:
         # 只展示文档中现存的博主（in_doc=True）；文档已删除的进入「已移除博主」区域，不在此显示
@@ -186,7 +190,9 @@ def list_kols(
     # 批量附加照片 URL
     photo_map = photos.get_photo_map([it["uid"] for it in items])
     for it in items:
-        it["photo_url"] = _photo_url(photo_map.get(it["uid"]))
+        filename = photo_map.get(it["uid"])
+        it["photo_url"] = _photo_url(filename)
+        it["photo_thumb_url"] = _photo_thumb_url(filename)
 
     # 脱敏（开启时只保留姓名+照片+签约）；管理员登录则不脱敏
     if settings_store.is_mask_enabled() and not privileged:
@@ -207,7 +213,9 @@ def get_kol(uid: str, privileged: bool = False) -> dict | None:
         if not k:
             return None
         row = _row_to_dict(k)
-    row["photo_url"] = _photo_url(photos.get_photo_filename(uid))
+    filename = photos.get_photo_filename(uid)
+    row["photo_url"] = _photo_url(filename)
+    row["photo_thumb_url"] = _photo_thumb_url(filename)
     if settings_store.is_mask_enabled() and not privileged:
         row = _apply_mask(row)
     return row

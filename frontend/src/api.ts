@@ -46,14 +46,16 @@ export interface ListParams {
   page_size?: number;
   sort_by?: string;
   order?: string;
+  signal?: AbortSignal;
 }
 
 export async function fetchKols(params: ListParams): Promise<KolListResponse> {
   const clean: Record<string, unknown> = {};
   Object.entries(params).forEach(([k, v]) => {
+    if (k === "signal") return;
     if (v !== "" && v !== undefined && v !== null) clean[k] = v;
   });
-  const { data } = await api.get<KolListResponse>("/api/kols", { params: clean });
+  const { data } = await api.get<KolListResponse>("/api/kols", { params: clean, signal: params.signal });
   return data;
 }
 
@@ -77,7 +79,7 @@ export async function triggerSync(): Promise<{ inserted: number; updated: number
   return data;
 }
 
-export async function uploadPhoto(uid: string, file: File): Promise<{ photo_url: string }> {
+export async function uploadPhoto(uid: string, file: File): Promise<{ photo_url: string; photo_thumb_url?: string | null }> {
   const form = new FormData();
   form.append("file", file);
   const { data } = await api.post(`/api/kols/${encodeURIComponent(uid)}/photo`, form, {
@@ -90,11 +92,12 @@ export async function deletePhoto(uid: string): Promise<void> {
   await api.delete(`/api/kols/${encodeURIComponent(uid)}/photo`);
 }
 
-// ---------- 包裹图（每人多张）----------
+// ---------- 已拍衣服（每人多张）----------
 
 export interface PackagePhoto {
   id: number;
   url: string;
+  thumb_url?: string | null;
 }
 
 export async function fetchPackagePhotos(uid: string): Promise<PackagePhoto[]> {
@@ -172,6 +175,18 @@ export async function unpinKol(uid: string): Promise<void> {
 
 export async function setPriorityBatch(uids: string[], priority: number | null): Promise<{ updated: number }> {
   const { data } = await api.put("/api/kols/priority/batch", { uids, priority });
+  return data;
+}
+
+export async function reorderKolPriority(uids: string[]): Promise<{ updated: number }> {
+  const { data } = await api.put("/api/kols/priority/reorder", { uids });
+  return data;
+}
+
+export async function applyKolPriorities(
+  items: { uid: string; priority: number | null }[]
+): Promise<{ updated: number }> {
+  const { data } = await api.put("/api/kols/priority/apply", { items });
   return data;
 }
 

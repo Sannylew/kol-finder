@@ -37,11 +37,15 @@ def build_client() -> KdocsClient:
 def sync_once(client: KdocsClient | None = None) -> dict:
     """执行一次同步，返回统计。并发调用时会串行执行（拿不到锁则等待）。"""
     with _sync_lock:
-        client = client or build_client()
-        data = client.fetch_rows()
-        rows = clean_rows(data.get("rows", []))
-        stats = db.upsert_rows(rows)
-        return stats
+        try:
+            client = client or build_client()
+            data = client.fetch_rows()
+            rows = clean_rows(data.get("rows", []))
+            stats = db.upsert_rows(rows)
+            return stats
+        except Exception as e:
+            db.record_sync_failure(str(e))
+            raise
 
 
 def main():

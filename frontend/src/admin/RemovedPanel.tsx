@@ -50,7 +50,7 @@ export default function RemovedPanel() {
 
       <div className="admin-card">
         <p className="hint" style={{ marginBottom: 14 }}>
-          以下博主已从在线文档中删除，但本地仍保留。删除将连带其照片、包裹图，不可恢复。
+          以下博主已从在线文档中删除，但本地仍保留。删除将连带其照片、已拍衣服，不可恢复。
         </p>
         {loading ? <p className="hint">读取中…</p>
           : items.length === 0 ? <div className="removed-empty">暂无已移除博主</div>
@@ -63,7 +63,7 @@ export default function RemovedPanel() {
                     <span className="removed-phone">{r.phone || "—"}</span>
                     <span className="removed-tags">
                       {r.has_photo && <span className="removed-tag">主图</span>}
-                      {r.pkg_count > 0 && <span className="removed-tag">包裹图 {r.pkg_count}</span>}
+                      {r.pkg_count > 0 && <span className="removed-tag">已拍衣服 {r.pkg_count}</span>}
                     </span>
                   </div>
                   <button className="btn-ghost sm danger" disabled={busy} onClick={() => setConfirmDel(r)}>删除</button>
@@ -76,7 +76,7 @@ export default function RemovedPanel() {
       <ConfirmDialog
         open={!!confirmDel}
         title="删除博主"
-        message={`确定删除「${confirmDel?.name || ""}」吗？将同时删除其照片和包裹图，不可恢复。`}
+        message={`确定删除「${confirmDel?.name || ""}」吗？将同时删除其照片和已拍衣服，不可恢复。`}
         confirmText="删除" danger
         onConfirm={handleDelete}
         onCancel={() => setConfirmDel(null)}
@@ -84,7 +84,7 @@ export default function RemovedPanel() {
       <ConfirmDialog
         open={confirmPurge}
         title="全部清理"
-        message={`确定清理全部 ${items.length} 个已移除博主吗？将同时删除他们的照片和包裹图，不可恢复。`}
+        message={`确定清理全部 ${items.length} 个已移除博主吗？将同时删除他们的照片和已拍衣服，不可恢复。`}
         confirmText="全部清理" danger
         onConfirm={handlePurge}
         onCancel={() => setConfirmPurge(false)}

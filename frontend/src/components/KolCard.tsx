@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { memo, useState } from "react";
 import type { Kol } from "../types";
 import { copyText } from "../clipboard";
 
@@ -7,7 +7,7 @@ interface Props {
   index: number;
   masked?: boolean;
   showCompany?: boolean;
-  onClick: () => void;
+  onClick: (kol: Kol) => void;
   onToast: (msg: string) => void;
 }
 
@@ -15,8 +15,10 @@ function fmt(v: number | null): string {
   return v === null || v === undefined ? "—" : String(v);
 }
 
-export default function KolCard({ kol, index, masked, showCompany, onClick, onToast }: Props) {
+function KolCard({ kol, index, masked, showCompany, onClick, onToast }: Props) {
   const [copied, setCopied] = useState("");
+  const isPriorityImage = index < 8;
+  const cardImage = kol.photo_thumb_url || kol.photo_url;
 
   function copy(e: React.MouseEvent, key: string, value: string | null, label: string) {
     e.stopPropagation();
@@ -38,26 +40,29 @@ export default function KolCard({ kol, index, masked, showCompany, onClick, onTo
   }
 
   return (
-    <div
+    <article
       className="card"
-      style={{ animationDelay: `${Math.min(index, 12) * 45}ms` }}
-      onClick={onClick}
+      onClick={() => onClick(kol)}
+      tabIndex={0}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          onClick(kol);
+        }
+      }}
     >
       <div className="photo">
         <span className={`badge ${kol.has_contract ? "signed" : "unsigned"}`}>
-          {kol.has_contract ? "● 已签合同" : "○ 未签合同"}
+          {kol.has_contract ? "已签合同" : "未签合同"}
         </span>
-        {kol.photo_url && (
-          <span className="has-photo">
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4">
-              <rect x="3" y="3" width="18" height="18" rx="3" />
-              <circle cx="8.5" cy="8.5" r="1.5" />
-              <path d="m21 15-5-5L5 21" />
-            </svg>
-          </span>
-        )}
-        {kol.photo_url ? (
-          <img src={kol.photo_url} alt={kol.name || ""} loading="lazy" />
+        {cardImage ? (
+          <img
+            src={cardImage}
+            alt={kol.name || "博主照片"}
+            decoding="async"
+            loading={isPriorityImage ? "eager" : "lazy"}
+            fetchPriority={isPriorityImage ? "high" : "auto"}
+          />
         ) : (
           <span className="initial">{(kol.name || "?").slice(0, 1)}</span>
         )}
@@ -67,6 +72,7 @@ export default function KolCard({ kol, index, masked, showCompany, onClick, onTo
             <div className="meta">
               {kol.size && <span className="tag gold">{kol.size}</span>}
               {kol.coop_period && <span className="tag">{kol.coop_period}</span>}
+              {showCompany && kol.company && <span className="tag">{kol.company}</span>}
             </div>
           )}
         </div>
@@ -108,7 +114,7 @@ export default function KolCard({ kol, index, masked, showCompany, onClick, onTo
         </div>
       </div>
 
-      <div className="body-strip">
+      <div className="body-strip" aria-label="身材数据">
         <div className="b"><div className="bn">{fmt(kol.height)}</div><div className="bl">身高</div></div>
         <div className="b"><div className="bn">{fmt(kol.weight)}</div><div className="bl">体重</div></div>
         <div className="b"><div className="bn">{fmt(kol.bust)}</div><div className="bl">胸围</div></div>
@@ -122,7 +128,7 @@ export default function KolCard({ kol, index, masked, showCompany, onClick, onTo
         </svg>
         <span className="txt">{kol.note || "暂无备注"}</span>
       </div>
-    </div>
+    </article>
   );
 }
 
@@ -143,3 +149,5 @@ const ExternalIcon = () => (
     <path d="M15 3h6v6M10 14 21 3" />
   </svg>
 );
+
+export default memo(KolCard);

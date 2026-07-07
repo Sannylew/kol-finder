@@ -21,6 +21,7 @@ export interface Kol {
   priority: number | null;
   updated_at: string | null;
   photo_url: string | null;
+  photo_thumb_url?: string | null;
 }
 
 export interface KolListResponse {
@@ -44,6 +45,8 @@ export interface SyncStatus {
     inserted: number;
     updated: number;
     message: string;
+    status?: "ok" | "error";
   } | null;
   interval_seconds: number;
+  status?: "ok" | "error" | "unknown";
 }

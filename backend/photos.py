@@ -8,6 +8,7 @@ import uuid
 from datetime import datetime
 from pathlib import Path
 
+from PIL import Image, ImageOps
 from sqlalchemy import DateTime, Integer, String, select
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -15,10 +16,13 @@ from db import Base, SessionLocal, engine
 
 UPLOAD_DIR = Path(__file__).with_name("uploads")
 UPLOAD_DIR.mkdir(exist_ok=True)
+THUMB_DIR = UPLOAD_DIR / "thumbs"
+THUMB_DIR.mkdir(exist_ok=True)
 
 ALLOWED_EXT = {".jpg", ".jpeg", ".png", ".webp", ".gif"}
 MAX_BYTES = 10 * 1024 * 1024  # 10MB
 MAX_PACKAGE_PHOTOS = 20  # 单个博主的包裹图数量上限
+THUMB_SIZE = (720, 960)
 
 
 def _validate_image(original_name: str, content: bytes) -> str:
@@ -50,6 +54,64 @@ def _sniff_image(content: bytes) -> bool:
     if content[:4] == b"RIFF" and content[8:12] == b"WEBP":
         return True
     return False
+
+
+def thumb_filename(filename: str | None) -> str | None:
+    if not filename:
+        return None
+    return f"{Path(filename).stem}.webp"
+
+
+def ensure_thumb(filename: str | None) -> str | None:
+    """Return a thumbnail filename, generating it when it is missing or stale."""
+    if not filename:
+        return None
+    src = UPLOAD_DIR / filename
+    if not src.exists() or not src.is_file():
+        return None
+    thumb = thumb_filename(filename)
+    if not thumb:
+        return None
+    dst = THUMB_DIR / thumb
+    if dst.exists() and dst.stat().st_mtime >= src.stat().st_mtime:
+        return thumb
+    try:
+        with Image.open(src) as im:
+            im = ImageOps.exif_transpose(im)
+            im.thumbnail(THUMB_SIZE, Image.Resampling.LANCZOS)
+            if im.mode not in ("RGB", "L"):
+                im = im.convert("RGB")
+            im.save(dst, "WEBP", quality=78, method=6)
+        return thumb
+    except Exception:
+        try:
+            dst.unlink(missing_ok=True)
+        except OSError:
+            pass
+        return None
+
+
+def existing_thumb(filename: str | None) -> str | None:
+    thumb = thumb_filename(filename)
+    if not thumb:
+        return None
+    dst = THUMB_DIR / thumb
+    return thumb if dst.exists() and dst.is_file() else None
+
+
+def thumb_url(filename: str | None, *, generate: bool = True) -> str | None:
+    thumb = ensure_thumb(filename) if generate else existing_thumb(filename)
+    return f"/uploads/thumbs/{thumb}" if thumb else None
+
+
+def delete_upload_file(filename: str | None) -> None:
+    if not filename:
+        return
+    for path in (UPLOAD_DIR / filename, THUMB_DIR / (thumb_filename(filename) or "")):
+        try:
+            path.unlink(missing_ok=True)
+        except OSError:
+            pass
 
 
 class KolPhoto(Base):
@@ -94,27 +156,28 @@ def save_photo(uid: str, original_name: str, content: bytes) -> str:
 
     # 删除旧文件
     old = get_photo_filename(uid)
-    if old:
-        old_path = UPLOAD_DIR / old
-        if old_path.exists():
-            try:
-                old_path.unlink()
-            except OSError:
-                pass
 
     # 用随机名避免冲突，保留扩展名
     filename = f"{uuid.uuid4().hex}{ext}"
     (UPLOAD_DIR / filename).write_bytes(content)
+    ensure_thumb(filename)
 
     now = datetime.now()
-    with SessionLocal() as session:
-        row = session.get(KolPhoto, uid)
-        if row:
-            row.filename = filename
-            row.updated_at = now
-        else:
-            session.add(KolPhoto(uid=uid, filename=filename, updated_at=now))
-        session.commit()
+    try:
+        with SessionLocal() as session:
+            row = session.get(KolPhoto, uid)
+            if row:
+                row.filename = filename
+                row.updated_at = now
+            else:
+                session.add(KolPhoto(uid=uid, filename=filename, updated_at=now))
+            session.commit()
+    except Exception:
+        delete_upload_file(filename)
+        raise
+
+    if old:
+        delete_upload_file(old)
 
     return filename
 
@@ -124,14 +187,10 @@ def delete_photo(uid: str) -> bool:
         row = session.get(KolPhoto, uid)
         if not row:
             return False
-        path = UPLOAD_DIR / row.filename
-        if path.exists():
-            try:
-                path.unlink()
-            except OSError:
-                pass
+        filename = row.filename
         session.delete(row)
         session.commit()
+    delete_upload_file(filename)
     return True
 
 
@@ -179,12 +238,13 @@ def save_package_photo(uid: str, original_name: str, content: bytes) -> dict:
     超出上限或文件非法时抛 ValueError。
     """
     if count_package_photos(uid) >= MAX_PACKAGE_PHOTOS:
-        raise ValueError(f"包裹图数量已达上限（{MAX_PACKAGE_PHOTOS} 张）")
+        raise ValueError(f"已拍衣服数量已达上限（{MAX_PACKAGE_PHOTOS} 张）")
     ext = _validate_image(original_name, content)
 
     filename = f"{uuid.uuid4().hex}{ext}"
     path = UPLOAD_DIR / filename
     path.write_bytes(content)
+    ensure_thumb(filename)
 
     now = datetime.now()
     try:
@@ -196,11 +256,7 @@ def save_package_photo(uid: str, original_name: str, content: bytes) -> dict:
             new_id = row.id
     except Exception:
         # 入库失败则清理已落盘文件，避免孤儿文件
-        if path.exists():
-            try:
-                path.unlink()
-            except OSError:
-                pass
+        delete_upload_file(filename)
         raise
 
     return {"id": new_id, "filename": filename}
@@ -212,14 +268,10 @@ def delete_package_photo(uid: str, photo_id: int) -> bool:
         row = session.get(KolPackagePhoto, photo_id)
         if not row or row.uid != uid:
             return False
-        path = UPLOAD_DIR / row.filename
-        if path.exists():
-            try:
-                path.unlink()
-            except OSError:
-                pass
+        filename = row.filename
         session.delete(row)
         session.commit()
+    delete_upload_file(filename)
     return True
 
 
@@ -230,14 +282,11 @@ def delete_all_package_photos(uid: str) -> int:
         rows = session.scalars(
             select(KolPackagePhoto).where(KolPackagePhoto.uid == uid)
         ).all()
+        filenames = [r.filename for r in rows]
         for r in rows:
-            path = UPLOAD_DIR / r.filename
-            if path.exists():
-                try:
-                    path.unlink()
-                except OSError:
-                    pass
             session.delete(r)
             deleted += 1
         session.commit()
+    for filename in filenames:
+        delete_upload_file(filename)
     return deleted

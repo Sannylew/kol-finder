@@ -8,6 +8,8 @@
 import os
 from pathlib import Path
 
+_BACKEND_DIR = Path(__file__).resolve().parent
+
 
 def _load_dotenv() -> None:
     env_path = Path(__file__).with_name(".env")
@@ -51,11 +53,35 @@ SYNC_INTERVAL_SECONDS = int(os.environ.get("SYNC_INTERVAL_SECONDS", "300"))
 APP_ENV = os.environ.get("APP_ENV", "development").strip().lower()
 IS_PROD = APP_ENV in ("production", "prod")
 
+def _sqlite_url(path: Path) -> str:
+    return f"sqlite:///{path.as_posix()}"
+
+
+def _normalize_database_url(raw_url: str) -> str:
+    """Resolve relative SQLite paths against backend/ so config survives cwd changes."""
+    raw_url = raw_url.strip()
+    if not raw_url:
+        return _sqlite_url(_BACKEND_DIR / "kol.db")
+    if not raw_url.startswith("sqlite:///"):
+        return raw_url
+
+    db_path_raw = raw_url.replace("sqlite:///", "", 1)
+    if not db_path_raw or db_path_raw == ":memory:":
+        return raw_url
+
+    db_path = Path(db_path_raw)
+    if not db_path.is_absolute():
+        parts = db_path.parts
+        if parts and parts[0] == "backend":
+            db_path = _BACKEND_DIR.parent / db_path
+        else:
+            db_path = _BACKEND_DIR / db_path
+    return _sqlite_url(db_path.resolve())
+
+
 # 数据库连接串。默认使用 backend 目录下的 SQLite 文件 kol.db。
 # 也可用 DATABASE_URL 环境变量覆盖（例如指向其他路径或数据库）。
-_DEFAULT_DB_PATH = Path(__file__).with_name("kol.db")
-_DEFAULT_DB_URL = f"sqlite:///{_DEFAULT_DB_PATH.as_posix()}"
-DATABASE_URL = os.environ.get("DATABASE_URL", "").strip() or _DEFAULT_DB_URL
+DATABASE_URL = _normalize_database_url(os.environ.get("DATABASE_URL", ""))
 
 # JWT 密钥。生产环境必须设置 AUTH_SECRET，否则重启后已登录令牌全部失效。
 AUTH_SECRET = os.environ.get("AUTH_SECRET", "").strip()

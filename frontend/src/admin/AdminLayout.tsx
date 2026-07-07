@@ -1,6 +1,6 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { NavLink, Outlet, useNavigate, Link } from "react-router-dom";
-import { clearToken } from "../api";
+import { clearToken, fetchVersion } from "../api";
 
 const MENU: { group: string; items: { to: string; label: string; end?: boolean }[] }[] = [
   { group: "概览", items: [{ to: "/admin", label: "仪表盘", end: true }] },
@@ -33,7 +33,12 @@ export default function AdminLayout() {
   const nav = useNavigate();
   const [menuOpen, setMenuOpen] = useState(false);
   const [dismissed, setDismissed] = useState(false);
+  const [version, setVersion] = useState("");
   const usingDefaultPwd = localStorage.getItem("kol_default_pwd") === "1";
+
+  useEffect(() => {
+    fetchVersion().then(setVersion).catch(() => {});
+  }, []);
 
   function logout() {
     clearToken();
@@ -71,6 +76,7 @@ export default function AdminLayout() {
         <header className="admin-topbar">
           <button className="admin-hamburger" onClick={() => setMenuOpen(true)} aria-label="菜单">☰</button>
           <div className="admin-topbar-spacer" />
+          {version && <span className="version-pill admin-version">v{version}</span>}
           <a className="admin-top-link" href="/">返回前台</a>
           <button className="admin-top-link danger" onClick={logout}>退出登录</button>
         </header>

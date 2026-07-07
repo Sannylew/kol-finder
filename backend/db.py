@@ -248,18 +248,43 @@ def get_last_sync() -> dict | None:
         ).first()
         if not row:
             return None
+        status = "error" if (row.message or "").lower().startswith("error:") else "ok"
         return {
             "synced_at": row.synced_at.isoformat(timespec="seconds"),
             "total": row.total,
             "inserted": row.inserted,
             "updated": row.updated,
             "message": row.message,
+            "status": status,
         }
+
+
+def record_sync_failure(message: str) -> None:
+    """Record a failed sync attempt so status endpoints reflect the latest real state."""
+    text_msg = (message or "unknown error").replace("\n", " ").strip()
+    if len(text_msg) > 230:
+        text_msg = text_msg[:230] + "..."
+    with SessionLocal() as session:
+        session.add(SyncLog(
+            synced_at=datetime.now(),
+            total=0,
+            inserted=0,
+            updated=0,
+            message=f"error: {text_msg}",
+        ))
+        session.commit()
 
 
 def count_kols() -> int:
     with SessionLocal() as session:
         return session.scalar(select(func.count()).select_from(Kol)) or 0
+
+
+def count_active_kols() -> int:
+    with SessionLocal() as session:
+        return session.scalar(
+            select(func.count()).select_from(Kol).where(Kol.in_doc.is_(True))
+        ) or 0
 
 
 def count_removed() -> int:
@@ -322,13 +347,7 @@ def _unlink_files(filenames: list[str]) -> None:
     """删除 uploads 目录下的文件，忽略缺失/错误。"""
     import photos
     for fn in filenames:
-        if not fn:
-            continue
-        path = photos.UPLOAD_DIR / fn
-        try:
-            path.unlink(missing_ok=True)
-        except OSError:
-            pass
+        photos.delete_upload_file(fn)
 
 
 def delete_kol(uid: str) -> bool:
@@ -403,6 +422,48 @@ def set_priority_batch(uids: list[str], value: int | None) -> int:
                 updated += 1
         session.commit()
     return updated
+
+
+def reorder_priority(uids: list[str]) -> int | None:
+    """Assign continuous priority values to the given KOLs in one transaction."""
+    if not uids:
+        return 0
+    with SessionLocal() as session:
+        rows = session.scalars(select(Kol).where(Kol.uid.in_(uids))).all()
+        by_uid = {row.uid: row for row in rows}
+        if len(by_uid) != len(uids):
+            return None
+        for idx, uid in enumerate(uids, start=1):
+            by_uid[uid].priority = idx
+        session.commit()
+        return len(uids)
+
+
+def apply_priorities(items: list[dict]) -> int | None:
+    """Apply explicit priority values in one transaction.
+
+    The submitted uid set must exactly match active KOLs. This prevents partial
+    saves from filtered lists and avoids accidentally updating removed records.
+    """
+    if not items:
+        return 0
+    uids = [str(item["uid"]) for item in items]
+    with SessionLocal() as session:
+        active_uids = set(session.scalars(
+            select(Kol.uid).where(Kol.in_doc.is_(True))
+        ).all())
+        if set(uids) != active_uids:
+            return None
+        rows = session.scalars(
+            select(Kol).where(Kol.uid.in_(uids), Kol.in_doc.is_(True))
+        ).all()
+        by_uid = {row.uid: row for row in rows}
+        if len(by_uid) != len(uids):
+            return None
+        for item in items:
+            by_uid[str(item["uid"])].priority = item.get("priority")
+        session.commit()
+        return len(items)
 
 
 def list_sync_logs(limit: int = 50) -> list[dict]:

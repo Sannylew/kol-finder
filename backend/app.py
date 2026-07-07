@@ -32,6 +32,17 @@ logger = logging.getLogger("kol.api")
 scheduler = BackgroundScheduler(timezone="Asia/Shanghai")
 
 
+class CachedStaticFiles(StaticFiles):
+    def file_response(self, *args, **kwargs):
+        response = super().file_response(*args, **kwargs)
+        full_path = str(args[0] if args else kwargs.get("full_path", "")).replace("\\", "/")
+        if "/thumbs/" in full_path:
+            response.headers["Cache-Control"] = "public, max-age=86400"
+        else:
+            response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+        return response
+
+
 def _scheduled_sync():
     if not settings_store.is_auto_sync_enabled():
         return  # 自动同步已关闭
@@ -84,7 +95,7 @@ app.add_middleware(
 )
 
 # 照片静态服务：/uploads/xxx.jpg 直接访问图片文件
-app.mount("/uploads", StaticFiles(directory=str(photos.UPLOAD_DIR)), name="uploads")
+app.mount("/uploads", CachedStaticFiles(directory=str(photos.UPLOAD_DIR)), name="uploads")
 
 
 @app.get("/api/health")
@@ -112,7 +123,7 @@ def list_kols(
     coop_period: str = "",
     company: str = "",
     page: int = Query(1, ge=1),
-    page_size: int = Query(20, ge=1, le=200),
+    page_size: int = Query(20, ge=1, le=1000),
     sort_by: str = "priority",
     order: str = "asc",
     logged_in: bool = Depends(auth.is_logged_in),
@@ -209,6 +220,24 @@ def unpin_kol(uid: str, _user: str = Depends(auth.verify_token)):
     return {"ok": True, "priority": None}
 
 
+@app.put("/api/kols/priority/reorder")
+def reorder_priority(payload: dict, _user: str = Depends(auth.verify_token)):
+    """Reorder KOL priority values by uid list. body: {uids: [...]}."""
+    raw_uids = (payload or {}).get("uids") or []
+    if not isinstance(raw_uids, list) or not raw_uids:
+        raise HTTPException(status_code=400, detail="缺少要排序的博主")
+    uids = [str(uid) for uid in raw_uids if str(uid)]
+    if len(uids) != len(raw_uids):
+        raise HTTPException(status_code=400, detail="排序列表包含无效博主")
+    if len(set(uids)) != len(uids):
+        raise HTTPException(status_code=400, detail="排序列表不能包含重复博主")
+    updated = db.reorder_priority(uids)
+    if updated is None:
+        raise HTTPException(status_code=404, detail="排序列表包含不存在的博主")
+    logger.info("重排优先级 by=%s: %d 个", _user, updated)
+    return {"ok": True, "updated": updated}
+
+
 @app.put("/api/kols/priority/batch")
 def set_priority_batch(payload: dict, _user: str = Depends(auth.verify_token)):
     """批量设置/清空博主优先级。body: {uids: [...], priority: int|null}。需登录。"""
@@ -228,6 +257,44 @@ def set_priority_batch(payload: dict, _user: str = Depends(auth.verify_token)):
     n = db.set_priority_batch([str(u) for u in uids], value)
     logger.info("批量设置优先级 by=%s: %d 个 -> %s", _user, n, value)
     return {"ok": True, "updated": n, "priority": value}
+
+
+@app.put("/api/kols/priority/apply")
+def apply_priorities(payload: dict, _user: str = Depends(auth.verify_token)):
+    """Atomically apply explicit priority values. body: {items: [{uid, priority|null}]}."""
+    raw_items = (payload or {}).get("items") or []
+    if not isinstance(raw_items, list) or not raw_items:
+        raise HTTPException(status_code=400, detail="缺少要保存的优先级")
+    items: list[dict] = []
+    seen: set[str] = set()
+    for raw in raw_items:
+        if not isinstance(raw, dict):
+            raise HTTPException(status_code=400, detail="优先级列表格式无效")
+        uid = str(raw.get("uid") or "")
+        if not uid:
+            raise HTTPException(status_code=400, detail="优先级列表包含无效博主")
+        if uid in seen:
+            raise HTTPException(status_code=400, detail="优先级列表不能包含重复博主")
+        seen.add(uid)
+        raw_priority = raw.get("priority", None)
+        if raw_priority is None or raw_priority == "":
+            priority = None
+        else:
+            try:
+                priority = int(raw_priority)
+            except (TypeError, ValueError):
+                raise HTTPException(status_code=400, detail="优先级必须是整数")
+            if priority < 0:
+                raise HTTPException(status_code=400, detail="优先级不能为负数")
+        items.append({"uid": uid, "priority": priority})
+    active_count = db.count_active_kols()
+    if len(items) != active_count:
+        raise HTTPException(status_code=400, detail="保存排序需要提交完整博主列表，请清空搜索并重新加载")
+    updated = db.apply_priorities(items)
+    if updated is None:
+        raise HTTPException(status_code=404, detail="优先级列表包含不存在的博主")
+    logger.info("apply priorities by=%s: %d kols", _user, updated)
+    return {"ok": True, "updated": updated}
 
 
 @app.get("/api/sync-logs")
@@ -270,7 +337,7 @@ async def upload_photo(uid: str, file: UploadFile = File(...), _user: str = Depe
         filename = photos.save_photo(uid, file.filename or "photo.jpg", content)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
-    return {"ok": True, "photo_url": f"/uploads/{filename}"}
+    return {"ok": True, "photo_url": f"/uploads/{filename}", "photo_thumb_url": photos.thumb_url(filename)}
 
 
 @app.delete("/api/kols/{uid}/photo")
@@ -286,7 +353,7 @@ def delete_photo(uid: str, _user: str = Depends(auth.verify_token)):
 def list_package_photos(uid: str):
     """某博主的包裹图列表（访客可见，不脱敏）。"""
     items = [
-        {"id": p["id"], "url": f"/uploads/{p['filename']}"}
+        {"id": p["id"], "url": f"/uploads/{p['filename']}", "thumb_url": photos.thumb_url(p["filename"], generate=False)}
         for p in photos.list_package_photos(uid)
     ]
     return {"items": items}
@@ -334,7 +401,11 @@ async def upload_package_photos(
         content = b"".join(chunks)
         try:
             info = photos.save_package_photo(uid, name, content)
-            added.append({"id": info["id"], "url": f"/uploads/{info['filename']}"})
+            added.append({
+                "id": info["id"],
+                "url": f"/uploads/{info['filename']}",
+                "thumb_url": photos.thumb_url(info["filename"]),
+            })
             remaining -= 1
         except ValueError as e:
             errors.append({"name": name, "reason": str(e)})
@@ -349,7 +420,7 @@ def delete_package_photo(uid: str, photo_id: int, _user: str = Depends(auth.veri
     """删除某博主的一张包裹图。需登录。"""
     ok = photos.delete_package_photo(uid, photo_id)
     if not ok:
-        raise HTTPException(status_code=404, detail="未找到该包裹图")
+        raise HTTPException(status_code=404, detail="未找到该已拍衣服")
     return {"ok": True}
 
 
@@ -457,7 +528,11 @@ def trigger_sync(_user: str = Depends(auth.verify_token)):
 def sync_status():
     """最近一次同步状态。"""
     last = db.get_last_sync()
-    return {"last_sync": last, "interval_seconds": settings_store.get_sync_interval()}
+    return {
+        "last_sync": last,
+        "status": (last or {}).get("status", "unknown"),
+        "interval_seconds": settings_store.get_sync_interval(),
+    }
 
 
 # ---------- 运维：日志 + 备份（需登录）----------
