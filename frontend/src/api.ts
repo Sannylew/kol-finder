@@ -158,7 +158,7 @@ export async function purgeRemovedKols(): Promise<{ deleted: number }> {
   return data;
 }
 
-// ---------- 优先级 / 置顶 ----------
+// ---------- 展示排序 / 置顶 ----------
 
 export async function setKolPriority(uid: string, priority: number | null): Promise<void> {
   await api.put(`/api/kols/${encodeURIComponent(uid)}/priority`, { priority });
@@ -264,6 +264,34 @@ export async function fetchVersion(): Promise<string> {
   } catch {
     return "";
   }
+}
+
+export interface UpdateStatus {
+  current_version: string;
+  latest_version?: string | null;
+  latest_tag?: string | null;
+  update_available: boolean;
+  supported: boolean;
+  reason: string;
+  running: boolean;
+  unit: string;
+}
+
+export interface UpdateStartResult {
+  ok: boolean;
+  target: string;
+  unit: string;
+  message: string;
+}
+
+export async function fetchUpdateStatus(): Promise<UpdateStatus> {
+  const { data } = await api.get<UpdateStatus>("/api/update/status");
+  return data;
+}
+
+export async function startVersionUpdate(target = "latest"): Promise<UpdateStartResult> {
+  const { data } = await api.post<UpdateStartResult>("/api/update/start", { target });
+  return data;
 }
 
 // ---------- 运维：日志 + 备份 ----------

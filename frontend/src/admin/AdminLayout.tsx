@@ -24,6 +24,7 @@ const MENU: { group: string; items: { to: string; label: string; end?: boolean }
       { to: "/admin/appearance", label: "外观设置" },
       { to: "/admin/logs", label: "系统日志" },
       { to: "/admin/backups", label: "数据备份" },
+      { to: "/admin/update", label: "版本更新" },
       { to: "/admin/password", label: "修改密码" },
     ],
   },

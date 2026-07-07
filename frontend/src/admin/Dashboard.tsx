@@ -2,7 +2,9 @@ import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   fetchStats, fetchSyncStatus, fetchRemovedCount, triggerSync,
+  fetchUpdateStatus,
   type Stats,
+  type UpdateStatus,
 } from "../api";
 import type { SyncStatus } from "../types";
 
@@ -11,6 +13,7 @@ export default function Dashboard() {
   const [stats, setStats] = useState<Stats | null>(null);
   const [sync, setSync] = useState<SyncStatus | null>(null);
   const [removed, setRemoved] = useState(0);
+  const [updateStatus, setUpdateStatus] = useState<UpdateStatus | null>(null);
   const [syncing, setSyncing] = useState(false);
   const [msg, setMsg] = useState<{ type: "ok" | "err"; text: string } | null>(null);
 
@@ -18,9 +21,16 @@ export default function Dashboard() {
     fetchStats().then(setStats).catch(() => {});
     fetchSyncStatus().then(setSync).catch(() => {});
     fetchRemovedCount().then(setRemoved).catch(() => {});
+    fetchUpdateStatus().then(setUpdateStatus).catch(() => {});
   }
 
-  useEffect(() => { refresh(); }, []);
+  useEffect(() => {
+    refresh();
+    const timer = window.setInterval(() => {
+      fetchUpdateStatus().then(setUpdateStatus).catch(() => {});
+    }, 30 * 60 * 1000);
+    return () => window.clearInterval(timer);
+  }, []);
 
   async function handleSync() {
     setSyncing(true);
@@ -59,6 +69,26 @@ export default function Dashboard() {
       </div>
 
       {msg && <div className={`msg ${msg.type}`}>{msg.text}</div>}
+
+      {updateStatus?.running && (
+        <div className="dashboard-update-push running">
+          <div>
+            <strong>版本更新正在运行</strong>
+            <span>后台正在执行更新任务，服务可能会短暂重启。</span>
+          </div>
+          <button className="btn-ghost sm" onClick={() => nav("/admin/update")}>查看进度</button>
+        </div>
+      )}
+
+      {!updateStatus?.running && updateStatus?.supported && updateStatus.update_available && (
+        <div className="dashboard-update-push">
+          <div>
+            <strong>发现新版本 {updateStatus.latest_tag || `v${updateStatus.latest_version}`}</strong>
+            <span>当前版本 v{updateStatus.current_version}，建议在低峰时段更新。</span>
+          </div>
+          <button className="btn-primary sm" onClick={() => nav("/admin/update")}>去更新</button>
+        </div>
+      )}
 
       <div className="admin-stat-grid">
         {cards.map((c) => (

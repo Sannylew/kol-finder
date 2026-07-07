@@ -192,7 +192,7 @@ export default function KolAdmin() {
       item.priority !== null && (!Number.isInteger(item.priority) || item.priority < 0)
     ));
     if (invalid) {
-      setMsg({ type: "err", text: "优先级必须是非负整数，数字越小越靠前" });
+      setMsg({ type: "err", text: "排序值必须是非负整数，数字越小越靠前" });
       return;
     }
     setSaving(true);
@@ -231,7 +231,7 @@ export default function KolAdmin() {
       <div className="admin-page-head kol-admin-head">
         <div>
           <h2>博主列表</h2>
-          <span className="hint">共 {total} 位，优先级数字越小越靠前，也可以拖动调整</span>
+          <span className="hint">共 {total} 位，拖动调整前台展示顺序，数字越小越靠前</span>
         </div>
         <div className="kol-head-actions">
           <button className="btn-ghost sm" onClick={loadList} disabled={loading || saving}>
@@ -256,8 +256,8 @@ export default function KolAdmin() {
         <div className="sort-panel always-sort-panel">
           <div className="sort-panel-head">
             <div>
-              <strong>拖动调整展示顺序</strong>
-              <span>保留优先级规则：数字越小越靠前。拖动会自动改写优先级，清空后回到默认顺序。</span>
+              <strong>前台展示顺序</strong>
+              <span>拖动、上移、下移或置顶后点击保存。未设置排序的博主会排在已排序博主之后。</span>
             </div>
             {dirty && <span className="sort-dirty">有未保存调整</span>}
           </div>
@@ -299,8 +299,8 @@ export default function KolAdmin() {
                       <span />
                       <span />
                     </div>
-                    <label className="sort-priority" title="优先级，数字越小越靠前">
-                      <span>优先级</span>
+                    <label className="sort-priority" title="排序，数字越小越靠前">
+                      <span>排序</span>
                       <input
                         value={priorityDrafts[k.uid] ?? ""}
                         placeholder="未排序"
@@ -331,7 +331,7 @@ export default function KolAdmin() {
                       <button className="link-btn" disabled={i === 0 || saving || orderLocked()} onClick={() => move(k.uid, -1)}>上移</button>
                       <button className="link-btn" disabled={i === items.length - 1 || saving || orderLocked()} onClick={() => move(k.uid, 1)}>下移</button>
                       <button className="link-btn" disabled={saving || orderLocked()} onClick={() => pin(k.uid)}>置顶</button>
-                      <button className="link-btn" disabled={saving || isExcluded || orderLocked()} onClick={() => clearPriority(k.uid)}>清空</button>
+                      <button className="link-btn" disabled={saving || isExcluded || orderLocked()} onClick={() => clearPriority(k.uid)}>移到默认</button>
                       <button className="link-btn danger" disabled={saving} onClick={() => setConfirmDel(k)}>删除</button>
                     </div>
                   </div>

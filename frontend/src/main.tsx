@@ -13,6 +13,7 @@ import SyncLogs from "./admin/SyncLogs";
 import AppearanceSettings from "./admin/AppearanceSettings";
 import SystemLogs from "./admin/SystemLogs";
 import BackupPanel from "./admin/BackupPanel";
+import UpdatePanel from "./admin/UpdatePanel";
 import ChangePassword from "./admin/ChangePassword";
 import "./styles.css";
 
@@ -38,6 +39,7 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
           <Route path="appearance" element={<AppearanceSettings />} />
           <Route path="logs" element={<SystemLogs />} />
           <Route path="backups" element={<BackupPanel />} />
+          <Route path="update" element={<UpdatePanel />} />
           <Route path="password" element={<ChangePassword />} />
         </Route>
       </Routes>

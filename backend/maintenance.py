@@ -6,9 +6,11 @@
 """
 import gzip
 import logging
+import os
 import re
 import shutil
 import sqlite3
+import subprocess
 from datetime import datetime
 from pathlib import Path
 
@@ -16,6 +18,10 @@ import config
 from logging_setup import LOG_FILE
 
 logger = logging.getLogger("kol.maintenance")
+
+PROJECT_DIR = Path(__file__).resolve().parent.parent
+UPDATE_UNIT = "kol-finder-update"
+_VERSION_TAG_RE = re.compile(r"^v(\d+)\.(\d+)\.(\d+)(?:[-.][A-Za-z0-9]+)?$")
 
 BACKUP_DIR = Path(__file__).with_name("backups")
 BACKUP_DIR.mkdir(exist_ok=True)
@@ -194,3 +200,136 @@ def restore_from_bytes(raw: bytes) -> dict:
     _restore_db_bytes(db_bytes)
     logger.warning("已从上传文件恢复数据库: %s", target.name)
     return {"restored": target.name, "safety_backup": safety["name"]}
+
+
+def _version_tuple(tag_or_version: str) -> tuple[int, int, int]:
+    text = (tag_or_version or "").strip()
+    if text and not text.startswith("v"):
+        text = f"v{text}"
+    match = _VERSION_TAG_RE.match(text)
+    if not match:
+        return (0, 0, 0)
+    return tuple(int(part) for part in match.groups())
+
+
+def _run_command(args: list[str], timeout: int = 15) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        args,
+        cwd=str(PROJECT_DIR),
+        text=True,
+        capture_output=True,
+        timeout=timeout,
+        check=False,
+    )
+
+
+def _latest_release_tag() -> str | None:
+    if not shutil.which("git") or not (PROJECT_DIR / ".git").exists():
+        return None
+    result = _run_command(["git", "ls-remote", "--tags", "--refs", "origin", "v*"], timeout=20)
+    if result.returncode != 0:
+        logger.warning("检查远端版本失败: %s", (result.stderr or result.stdout).strip())
+        return None
+
+    tags: list[str] = []
+    for line in result.stdout.splitlines():
+        ref = line.rsplit("/", 1)[-1].strip()
+        if _VERSION_TAG_RE.match(ref):
+            tags.append(ref)
+    if not tags:
+        return None
+    return max(tags, key=_version_tuple)
+
+
+def _update_running() -> bool:
+    if os.name == "nt" or not shutil.which("systemctl"):
+        return False
+    result = _run_command(["systemctl", "is-active", "--quiet", UPDATE_UNIT], timeout=5)
+    return result.returncode == 0
+
+
+def _unsupported_reason() -> str:
+    if os.name == "nt":
+        return "当前是 Windows 本地开发环境，不支持在后台直接执行服务器更新。"
+    if not (PROJECT_DIR / ".git").exists():
+        return "当前目录不是 Git 部署，不能通过后台拉取版本更新。"
+    if not (PROJECT_DIR / "scripts" / "update.sh").exists():
+        return "缺少 scripts/update.sh 更新脚本。"
+    if not shutil.which("git"):
+        return "服务器缺少 git 命令。"
+    if not shutil.which("bash"):
+        return "服务器缺少 bash 命令。"
+    if not shutil.which("systemctl") or not shutil.which("systemd-run"):
+        return "服务器未提供 systemd-run/systemctl，不能托管后台更新任务。"
+    if hasattr(os, "geteuid") and os.geteuid() != 0:
+        return "后端服务需要以 root 运行，或具备启动 systemd 更新任务的权限。"
+    return ""
+
+
+def update_status() -> dict:
+    current = config.APP_VERSION
+    reason = _unsupported_reason()
+    supported = not reason
+    latest = _latest_release_tag() if supported else None
+    update_available = bool(latest and _version_tuple(latest) > _version_tuple(current))
+    if supported:
+        if not latest:
+            reason = "未能获取远端最新版本，请检查服务器网络或 GitHub 访问。"
+        elif update_available:
+            reason = "发现可用更新。"
+        else:
+            reason = "当前已是最新版本。"
+    return {
+        "current_version": current,
+        "latest_tag": latest,
+        "latest_version": latest[1:] if latest and latest.startswith("v") else latest,
+        "update_available": update_available,
+        "supported": supported,
+        "reason": reason,
+        "running": _update_running(),
+        "unit": UPDATE_UNIT,
+    }
+
+
+def start_update(target: str = "latest") -> dict:
+    target = (target or "latest").strip()
+    status = update_status()
+    if not status["supported"]:
+        raise RuntimeError(status["reason"])
+    if status["running"]:
+        raise RuntimeError("已有版本更新任务正在运行，请稍后再试。")
+
+    if target == "latest":
+        ref = status.get("latest_tag")
+        if not ref:
+            raise RuntimeError("未能获取远端最新版本，请稍后再试。")
+        if not status["update_available"]:
+            raise RuntimeError("当前已是最新版本，无需更新。")
+    else:
+        ref = target if target.startswith("v") else f"v{target}"
+        if not _VERSION_TAG_RE.match(ref):
+            raise ValueError("版本号格式必须类似 v1.3.0")
+
+    script = PROJECT_DIR / "scripts" / "update.sh"
+    args = [
+        "systemd-run",
+        f"--unit={UPDATE_UNIT}",
+        "--collect",
+        f"--property=WorkingDirectory={PROJECT_DIR}",
+        "/usr/bin/env",
+        "bash",
+        str(script),
+        str(ref),
+    ]
+    result = _run_command(args, timeout=20)
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout or "").strip()
+        raise RuntimeError(detail or "启动更新任务失败")
+
+    logger.warning("版本更新任务已启动: target=%s unit=%s", ref, UPDATE_UNIT)
+    return {
+        "ok": True,
+        "target": str(ref),
+        "unit": UPDATE_UNIT,
+        "message": "版本更新任务已启动，服务会在更新过程中自动重启。",
+    }

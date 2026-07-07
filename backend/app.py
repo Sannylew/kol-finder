@@ -128,7 +128,7 @@ def list_kols(
     order: str = "asc",
     logged_in: bool = Depends(auth.is_logged_in),
 ):
-    """达人列表：分页 + 搜索 + 筛选 + 排序。默认按优先级。管理员登录则不脱敏。"""
+    """达人列表：分页 + 搜索 + 筛选 + 排序。默认按展示排序。管理员登录则不脱敏。"""
     return queries.list_kols(
         keyword=keyword,
         has_contract=has_contract,
@@ -186,7 +186,7 @@ def delete_kol(uid: str, _user: str = Depends(auth.verify_token)):
 
 @app.put("/api/kols/{uid}/priority")
 def set_kol_priority(uid: str, payload: dict, _user: str = Depends(auth.verify_token)):
-    """设置或清空博主优先级（数字越低越靠前，null 清空）。需登录。"""
+    """设置或清空博主展示排序（数字越低越靠前，null 清空）。需登录。"""
     raw = (payload or {}).get("priority", None)
     value: int | None
     if raw is None or raw == "":
@@ -195,9 +195,9 @@ def set_kol_priority(uid: str, payload: dict, _user: str = Depends(auth.verify_t
         try:
             value = int(raw)
         except (TypeError, ValueError):
-            raise HTTPException(status_code=400, detail="优先级必须是整数")
+            raise HTTPException(status_code=400, detail="排序值必须是整数")
         if value < 0:
-            raise HTTPException(status_code=400, detail="优先级不能为负数")
+            raise HTTPException(status_code=400, detail="排序值不能为负数")
     if not db.set_priority(uid, value):
         raise HTTPException(status_code=404, detail="未找到该博主")
     return {"ok": True, "priority": value}
@@ -205,7 +205,7 @@ def set_kol_priority(uid: str, payload: dict, _user: str = Depends(auth.verify_t
 
 @app.post("/api/kols/{uid}/pin")
 def pin_kol(uid: str, _user: str = Depends(auth.verify_token)):
-    """置顶：设为当前最靠前的优先级。需登录。"""
+    """置顶：设为当前最靠前的展示排序。需登录。"""
     val = db.pin_kol(uid)
     if val is None:
         raise HTTPException(status_code=404, detail="未找到该博主")
@@ -214,7 +214,7 @@ def pin_kol(uid: str, _user: str = Depends(auth.verify_token)):
 
 @app.delete("/api/kols/{uid}/pin")
 def unpin_kol(uid: str, _user: str = Depends(auth.verify_token)):
-    """取消置顶：清空优先级。需登录。"""
+    """取消置顶：清空展示排序。需登录。"""
     if not db.unpin_kol(uid):
         raise HTTPException(status_code=404, detail="未找到该博主")
     return {"ok": True, "priority": None}
@@ -234,13 +234,13 @@ def reorder_priority(payload: dict, _user: str = Depends(auth.verify_token)):
     updated = db.reorder_priority(uids)
     if updated is None:
         raise HTTPException(status_code=404, detail="排序列表包含不存在的博主")
-    logger.info("重排优先级 by=%s: %d 个", _user, updated)
+    logger.info("重排展示排序 by=%s: %d 个", _user, updated)
     return {"ok": True, "updated": updated}
 
 
 @app.put("/api/kols/priority/batch")
 def set_priority_batch(payload: dict, _user: str = Depends(auth.verify_token)):
-    """批量设置/清空博主优先级。body: {uids: [...], priority: int|null}。需登录。"""
+    """批量设置/清空博主展示排序。body: {uids: [...], priority: int|null}。需登录。"""
     uids = (payload or {}).get("uids") or []
     if not isinstance(uids, list) or not uids:
         raise HTTPException(status_code=400, detail="缺少要修改的博主")
@@ -251,11 +251,11 @@ def set_priority_batch(payload: dict, _user: str = Depends(auth.verify_token)):
         try:
             value = int(raw)
         except (TypeError, ValueError):
-            raise HTTPException(status_code=400, detail="优先级必须是整数")
+            raise HTTPException(status_code=400, detail="排序值必须是整数")
         if value < 0:
-            raise HTTPException(status_code=400, detail="优先级不能为负数")
+            raise HTTPException(status_code=400, detail="排序值不能为负数")
     n = db.set_priority_batch([str(u) for u in uids], value)
-    logger.info("批量设置优先级 by=%s: %d 个 -> %s", _user, n, value)
+    logger.info("批量设置展示排序 by=%s: %d 个 -> %s", _user, n, value)
     return {"ok": True, "updated": n, "priority": value}
 
 
@@ -264,17 +264,17 @@ def apply_priorities(payload: dict, _user: str = Depends(auth.verify_token)):
     """Atomically apply explicit priority values. body: {items: [{uid, priority|null}]}."""
     raw_items = (payload or {}).get("items") or []
     if not isinstance(raw_items, list) or not raw_items:
-        raise HTTPException(status_code=400, detail="缺少要保存的优先级")
+        raise HTTPException(status_code=400, detail="缺少要保存的排序")
     items: list[dict] = []
     seen: set[str] = set()
     for raw in raw_items:
         if not isinstance(raw, dict):
-            raise HTTPException(status_code=400, detail="优先级列表格式无效")
+            raise HTTPException(status_code=400, detail="排序列表格式无效")
         uid = str(raw.get("uid") or "")
         if not uid:
-            raise HTTPException(status_code=400, detail="优先级列表包含无效博主")
+            raise HTTPException(status_code=400, detail="排序列表包含无效博主")
         if uid in seen:
-            raise HTTPException(status_code=400, detail="优先级列表不能包含重复博主")
+            raise HTTPException(status_code=400, detail="排序列表不能包含重复博主")
         seen.add(uid)
         raw_priority = raw.get("priority", None)
         if raw_priority is None or raw_priority == "":
@@ -283,16 +283,16 @@ def apply_priorities(payload: dict, _user: str = Depends(auth.verify_token)):
             try:
                 priority = int(raw_priority)
             except (TypeError, ValueError):
-                raise HTTPException(status_code=400, detail="优先级必须是整数")
+                raise HTTPException(status_code=400, detail="排序值必须是整数")
             if priority < 0:
-                raise HTTPException(status_code=400, detail="优先级不能为负数")
+                raise HTTPException(status_code=400, detail="排序值不能为负数")
         items.append({"uid": uid, "priority": priority})
     active_count = db.count_active_kols()
     if len(items) != active_count:
         raise HTTPException(status_code=400, detail="保存排序需要提交完整博主列表，请清空搜索并重新加载")
     updated = db.apply_priorities(items)
     if updated is None:
-        raise HTTPException(status_code=404, detail="优先级列表包含不存在的博主")
+        raise HTTPException(status_code=404, detail="排序列表包含不存在的博主")
     logger.info("apply priorities by=%s: %d kols", _user, updated)
     return {"ok": True, "updated": updated}
 
@@ -620,3 +620,23 @@ async def restore_upload(file: UploadFile = File(...), _user: str = Depends(auth
         raise HTTPException(status_code=500, detail=str(e))
     logger.warning("数据库已从上传文件恢复 by=%s: %s", _user, result)
     return {"ok": True, **result}
+
+
+@app.get("/api/update/status")
+def get_update_status(_user: str = Depends(auth.verify_token)):
+    """检查版本更新状态。需要登录。"""
+    return maintenance.update_status()
+
+
+@app.post("/api/update/start")
+def start_version_update(payload: dict | None = None, _user: str = Depends(auth.verify_token)):
+    """启动受控版本更新任务。需要登录。"""
+    target = str((payload or {}).get("target") or "latest")
+    try:
+        result = maintenance.start_update(target)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except RuntimeError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    logger.warning("版本更新已触发 by=%s target=%s", _user, result.get("target"))
+    return result
