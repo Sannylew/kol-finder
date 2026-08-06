@@ -33,22 +33,50 @@ step "备份当前数据"
 
 # 2) 拉取最新代码
 step "拉取最新代码"
-# 国内网络对 github.com 不稳时，自动重试并回退到镜像
+# 国内网络对 github.com 不稳时，自动重试并自动选择可用镜像
 OFFICIAL_URL="$(git remote get-url origin 2>/dev/null || echo '')"
-MIRROR_URL="https://ghfast.top/https://github.com/Sannylew/kol-finder.git"
+MIRROR_URLS=(
+  "https://ghproxy.net/https://github.com/Sannylew/kol-finder.git"
+  "https://gh-proxy.com/https://github.com/Sannylew/kol-finder.git"
+  "https://ghfast.top/https://github.com/Sannylew/kol-finder.git"
+)
+SELECTED_MIRROR_URL=""
+
+select_mirror() {
+  local url
+  SELECTED_MIRROR_URL=""
+  for url in "${MIRROR_URLS[@]}"; do
+    echo "  测试镜像: $url"
+    if git ls-remote "$url" HEAD >/dev/null 2>&1; then
+      SELECTED_MIRROR_URL="$url"
+      echo "  选用镜像: $SELECTED_MIRROR_URL"
+      return 0
+    fi
+  done
+  return 1
+}
+
 git config http.version HTTP/1.1 2>/dev/null || true
 if ! git fetch origin --tags --prune 2>/dev/null; then
-  echo "  官方源拉取失败，切换到国内镜像 ..."
-  git remote set-url origin "$MIRROR_URL"
+  echo "  官方源拉取失败，自动选择国内镜像 ..."
+  select_mirror || fail "拉取失败：官方源和所有镜像均不可用，请稍后重试"
+  git remote set-url origin "$SELECTED_MIRROR_URL"
   git fetch origin --tags --prune || { git remote set-url origin "$OFFICIAL_URL"; fail "拉取失败（网络问题），请稍后重试"; }
   git remote set-url origin "$OFFICIAL_URL"
 fi
 if [ -n "$REF" ]; then
-  git checkout -f "$REF"
-  git pull --ff-only origin "$REF" 2>/dev/null || true
+  if git rev-parse --verify --quiet "refs/remotes/origin/$REF" >/dev/null; then
+    git checkout -B "$REF" "origin/$REF"
+  else
+    git checkout -f "$REF"
+  fi
 else
   BR="$(git rev-parse --abbrev-ref HEAD)"
-  git pull --ff-only origin "$BR" 2>/dev/null || true
+  if [ "$BR" = "HEAD" ]; then
+    echo "当前处于 detached HEAD，已完成 fetch，跳过分支 fast-forward"
+  else
+    git merge --ff-only "origin/$BR"
+  fi
 fi
 NEW_VER="$(cat VERSION 2>/dev/null || echo unknown)"
 echo "更新后版本：$NEW_VER"

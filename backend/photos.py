@@ -21,7 +21,7 @@ THUMB_DIR.mkdir(exist_ok=True)
 
 ALLOWED_EXT = {".jpg", ".jpeg", ".png", ".webp", ".gif"}
 MAX_BYTES = 10 * 1024 * 1024  # 10MB
-MAX_PACKAGE_PHOTOS = 20  # 单个博主的包裹图数量上限
+DEFAULT_PACKAGE_PHOTO_LIMIT = 20  # 单个博主的默认包裹图数量上限；0=不限制
 THUMB_SIZE = (720, 960)
 
 
@@ -232,13 +232,15 @@ def count_package_photos(uid: str) -> int:
         ) or 0
 
 
-def save_package_photo(uid: str, original_name: str, content: bytes) -> dict:
+def save_package_photo(uid: str, original_name: str, content: bytes, limit: int | None = None) -> dict:
     """校验并保存一张包裹图（追加，不覆盖）。返回 {id, filename}。
 
     超出上限或文件非法时抛 ValueError。
     """
-    if count_package_photos(uid) >= MAX_PACKAGE_PHOTOS:
-        raise ValueError(f"已拍衣服数量已达上限（{MAX_PACKAGE_PHOTOS} 张）")
+    if limit is None:
+        limit = DEFAULT_PACKAGE_PHOTO_LIMIT
+    if limit > 0 and count_package_photos(uid) >= limit:
+        raise ValueError(f"已拍衣服数量已达上限（{limit} 张）")
     ext = _validate_image(original_name, content)
 
     filename = f"{uuid.uuid4().hex}{ext}"

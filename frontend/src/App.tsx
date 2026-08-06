@@ -52,6 +52,7 @@ export default function App() {
   const [masked, setMasked] = useState(false);
   const [companyName, setCompanyName] = useState("");
   const [showCompanyOnCard, setShowCompanyOnCard] = useState(false);
+  const [packagePhotoLimit, setPackagePhotoLimit] = useState(20);
   const [configLoaded, setConfigLoaded] = useState(false);
   const [stats, setStats] = useState<Stats | null>(null);
   const [version, setVersion] = useState("");
@@ -85,6 +86,8 @@ export default function App() {
         setMasked(!!configRes.value.mask_enabled);
         setCompanyName(configRes.value.company_name || "");
         setShowCompanyOnCard(!!configRes.value.show_company_on_card);
+        const limit = Number(configRes.value.package_photo_limit);
+        setPackagePhotoLimit(Number.isFinite(limit) && limit >= 0 ? limit : 20);
       }
       if (statsRes.status === "fulfilled") setStats(statsRes.value);
       if (versionRes.status === "fulfilled") setVersion(versionRes.value);
@@ -426,6 +429,7 @@ export default function App() {
         kol={selected}
         masked={effectiveMask}
         isAdmin={isAdmin}
+        packagePhotoLimit={packagePhotoLimit}
         onClose={() => setSelected(null)}
         onPhotoChange={handlePhotoChange}
         onToast={showToast}

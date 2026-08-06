@@ -1,10 +1,19 @@
 import { useEffect, useState } from "react";
 import { fetchSettings, saveSettings } from "../api";
 
+const PACKAGE_LIMIT_OPTIONS = [
+  { value: 10, label: "10 张" },
+  { value: 20, label: "20 张" },
+  { value: 50, label: "50 张" },
+  { value: 100, label: "100 张" },
+  { value: 0, label: "不限制" },
+];
+
 export default function AppearanceSettings() {
   const [companyName, setCompanyName] = useState("");
   const [mask, setMask] = useState(false);
   const [showCompany, setShowCompany] = useState(false);
+  const [packageLimit, setPackageLimit] = useState(20);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState<{ type: "ok" | "err"; text: string } | null>(null);
@@ -15,6 +24,8 @@ export default function AppearanceSettings() {
         setCompanyName(s.company_name || "");
         setMask(s.mask_enabled === "1" || s.mask_enabled === 1 || s.mask_enabled === true);
         setShowCompany(s.show_company_on_card === "1" || s.show_company_on_card === 1 || s.show_company_on_card === true);
+        const limit = Number(s.package_photo_limit);
+        setPackageLimit(Number.isFinite(limit) && limit >= 0 ? limit : 20);
       })
       .catch(() => setMsg({ type: "err", text: "读取配置失败" }))
       .finally(() => setLoading(false));
@@ -27,6 +38,7 @@ export default function AppearanceSettings() {
         company_name: companyName.trim(),
         mask_enabled: mask ? "1" : "0",
         show_company_on_card: showCompany ? "1" : "0",
+        package_photo_limit: String(packageLimit),
       } as any);
       setMsg({ type: "ok", text: "已保存，配置立即生效" });
     } catch (e: any) {
@@ -69,6 +81,23 @@ export default function AppearanceSettings() {
           <button className={`switch ${showCompany ? "on" : ""}`} onClick={() => setShowCompany(!showCompany)} aria-label="卡片显示公司开关">
             <span className="knob" />
           </button>
+        </div>
+
+        <div className="field">
+          <label>已拍衣服图片上限</label>
+          <div className="preset-group" role="group" aria-label="已拍衣服图片上限">
+            {PACKAGE_LIMIT_OPTIONS.map((opt) => (
+              <button
+                key={opt.value}
+                type="button"
+                className={`preset-btn ${packageLimit === opt.value ? "active" : ""}`}
+                onClick={() => setPackageLimit(opt.value)}
+              >
+                {opt.label}
+              </button>
+            ))}
+          </div>
+          <p className="hint">限制每个博主详情里可追加的已拍衣服图片数量；不限制时仍保留单张 10MB 上传限制。</p>
         </div>
 
         <div className="modal-actions">

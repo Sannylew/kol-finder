@@ -12,6 +12,7 @@ interface Props {
   kol: Kol | null;
   masked?: boolean;
   isAdmin?: boolean;
+  packagePhotoLimit?: number;
   onClose: () => void;
   onPhotoChange: (uid: string, photoUrl: string | null, photoThumbUrl?: string | null) => void;
   onToast: (text: string, type?: "" | "ok" | "err") => void;
@@ -38,7 +39,7 @@ const CloseIcon = () => (
   </svg>
 );
 
-export default function KolDrawer({ kol, masked, isAdmin, onClose, onPhotoChange, onToast }: Props) {
+export default function KolDrawer({ kol, masked, isAdmin, packagePhotoLimit = 20, onClose, onPhotoChange, onToast }: Props) {
   const drawerRef = useRef<HTMLElement>(null);
   const photoRef = useRef<HTMLDivElement>(null);
   const collapsingPhotoRef = useRef(false);
@@ -270,6 +271,11 @@ export default function KolDrawer({ kol, masked, isAdmin, onClose, onPhotoChange
   const drawerPhotoSrc = kol
     ? (photoPreviewOpen && fullPhotoReady ? kol.photo_url : (kol.photo_thumb_url || kol.photo_url))
     : "";
+  const normalizedPackageLimit = Math.max(0, Number(packagePhotoLimit) || 0);
+  const packageLimitReached = normalizedPackageLimit > 0 && pkgPhotos.length >= normalizedPackageLimit;
+  const packageTitle = normalizedPackageLimit > 0
+    ? `已拍衣服（${pkgPhotos.length}/${normalizedPackageLimit}）`
+    : `已拍衣服${pkgPhotos.length > 0 ? `（${pkgPhotos.length}）` : ""}`;
 
   return (
     <>
@@ -367,7 +373,7 @@ export default function KolDrawer({ kol, masked, isAdmin, onClose, onPhotoChange
               />
               {(isAdmin || pkgPhotos.length > 0) && (
                 <div className="section pkg-section archive-section">
-                  <h4>已拍衣服{pkgPhotos.length > 0 ? `（${pkgPhotos.length}）` : ""}</h4>
+                  <h4>{packageTitle}</h4>
                   <div className="pkg-grid">
                     {pkgPhotos.map((p, i) => (
                       <div className="pkg-thumb" key={p.id}>
@@ -391,9 +397,16 @@ export default function KolDrawer({ kol, masked, isAdmin, onClose, onPhotoChange
                     ))}
                     {isAdmin && (
                       <div
-                        className={`pkg-add ${pkgBusy ? "busy" : ""}`}
-                        onClick={() => !pkgBusy && pkgFileRef.current?.click()}
-                        title="添加已拍衣服"
+                        className={`pkg-add ${pkgBusy ? "busy" : ""} ${packageLimitReached ? "disabled" : ""}`}
+                        onClick={() => {
+                          if (pkgBusy) return;
+                          if (packageLimitReached) {
+                            onToast(`已拍衣服已达上限（${normalizedPackageLimit} 张）`, "err");
+                            return;
+                          }
+                          pkgFileRef.current?.click();
+                        }}
+                        title={packageLimitReached ? `已达上限（最多 ${normalizedPackageLimit} 张）` : "添加已拍衣服"}
                       >
                         {pkgBusy ? (
                           <span className="pkg-add-txt">上传中…</span>

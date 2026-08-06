@@ -18,6 +18,7 @@ DEFAULTS = {
     "mask_enabled": "0",  # 前端脱敏开关：1=开（只显示姓名+照片）
     "company_name": "",  # 公司名称（显示在左上角品牌区，公开可见）
     "show_company_on_card": "0",  # 前台卡片是否显示公司行：1=显示，默认隐藏
+    "package_photo_limit": "20",  # 单个博主已拍衣服图片上限；0=不限制
 }
 
 SECRET_KEYS = {"kdocs_token"}  # 返回前端时遮罩
@@ -98,3 +99,11 @@ def get_company_name() -> str:
 
 def is_show_company_on_card() -> bool:
     return str(get("show_company_on_card")).strip() in {"1", "true", "True"}
+
+
+def get_package_photo_limit() -> int:
+    """Return package photo limit per KOL. 0 means unlimited."""
+    try:
+        return max(0, int(str(get("package_photo_limit")).strip()))
+    except (TypeError, ValueError):
+        return 20

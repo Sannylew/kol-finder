@@ -211,6 +211,7 @@ export interface AppSettings {
   kdocs_token_set?: boolean;
   sync_interval_seconds: string;
   company_name?: string;
+  package_photo_limit?: string | number;
 }
 
 export async function fetchSettings(): Promise<AppSettings> {
@@ -237,7 +238,7 @@ export async function changePassword(old_password: string, new_password: string)
   await api.post("/api/auth/change-password", { old_password, new_password });
 }
 
-export async function fetchPublicConfig(): Promise<{ mask_enabled: boolean; company_name?: string; show_company_on_card?: boolean }> {
+export async function fetchPublicConfig(): Promise<{ mask_enabled: boolean; company_name?: string; show_company_on_card?: boolean; package_photo_limit?: number }> {
   const { data } = await api.get("/api/public-config");
   return data;
 }

@@ -373,14 +373,15 @@ async def upload_package_photos(
         raise HTTPException(status_code=404, detail="未找到该博主")
 
     max_bytes = photos.MAX_BYTES
-    remaining = photos.MAX_PACKAGE_PHOTOS - photos.count_package_photos(uid)
+    package_limit = settings_store.get_package_photo_limit()
+    remaining = None if package_limit == 0 else package_limit - photos.count_package_photos(uid)
     added: list[dict] = []
     errors: list[dict] = []
 
     for f in files:
         name = f.filename or "photo.jpg"
-        if remaining <= 0:
-            errors.append({"name": name, "reason": f"已达上限（最多 {photos.MAX_PACKAGE_PHOTOS} 张）"})
+        if remaining is not None and remaining <= 0:
+            errors.append({"name": name, "reason": f"已达上限（最多 {package_limit} 张）"})
             continue
         # 分块读取并限制大小，避免超大文件撑爆内存
         chunks = []
@@ -400,13 +401,14 @@ async def upload_package_photos(
             continue
         content = b"".join(chunks)
         try:
-            info = photos.save_package_photo(uid, name, content)
+            info = photos.save_package_photo(uid, name, content, limit=package_limit)
             added.append({
                 "id": info["id"],
                 "url": f"/uploads/{info['filename']}",
                 "thumb_url": photos.thumb_url(info["filename"]),
             })
-            remaining -= 1
+            if remaining is not None:
+                remaining -= 1
         except ValueError as e:
             errors.append({"name": name, "reason": str(e)})
 
@@ -450,6 +452,7 @@ def public_config():
         "mask_enabled": settings_store.is_mask_enabled(),
         "company_name": settings_store.get_company_name(),
         "show_company_on_card": settings_store.is_show_company_on_card(),
+        "package_photo_limit": settings_store.get_package_photo_limit(),
     }
 
 
@@ -462,7 +465,7 @@ def get_settings(_user: str = Depends(auth.verify_token)):
 @app.put("/api/settings")
 def update_settings(payload: dict, _user: str = Depends(auth.verify_token)):
     """更新后台配置。token 传空表示不修改。修改间隔会重排定时任务。需登录。"""
-    allowed = {"kdocs_webhook_url", "kdocs_token", "sync_interval_seconds", "mask_enabled", "auto_sync_enabled", "company_name", "show_company_on_card"}
+    allowed = {"kdocs_webhook_url", "kdocs_token", "sync_interval_seconds", "mask_enabled", "auto_sync_enabled", "company_name", "show_company_on_card", "package_photo_limit"}
     items = {k: v for k, v in payload.items() if k in allowed}
 
     # 校验同步间隔
@@ -474,6 +477,15 @@ def update_settings(payload: dict, _user: str = Depends(auth.verify_token)):
             items["sync_interval_seconds"] = str(sec)
         except (TypeError, ValueError):
             raise HTTPException(status_code=400, detail="同步间隔必须是数字")
+
+    if "package_photo_limit" in items:
+        try:
+            limit = int(items["package_photo_limit"])
+        except (TypeError, ValueError):
+            raise HTTPException(status_code=400, detail="已拍衣服上限必须是数字")
+        if limit < 0:
+            raise HTTPException(status_code=400, detail="已拍衣服上限不能为负数")
+        items["package_photo_limit"] = str(limit)
 
     # 开关类转 0/1
     for sw in ("mask_enabled", "auto_sync_enabled", "show_company_on_card"):
