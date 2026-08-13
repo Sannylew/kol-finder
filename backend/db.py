@@ -10,6 +10,7 @@ from sqlalchemy import (
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, sessionmaker
 
 import config
+import cleaner
 
 # SQLite 需要 check_same_thread=False 以配合多线程（APScheduler + Web）
 _is_sqlite = config.DATABASE_URL.startswith("sqlite")
@@ -58,6 +59,8 @@ class Kol(Base):
     video_status: Mapped[str | None] = mapped_column(String(64))
     douyin_id: Mapped[str | None] = mapped_column(String(64), index=True)
     address: Mapped[str | None] = mapped_column(Text)
+    # 快递状态（如 "8/9已对" / "8.11寄出" / "待寄回"）。本地录入 + 同步共用，非敏感。
+    delivery_status: Mapped[str | None] = mapped_column(String(64))
     # 是否在最近一次成功同步的文档中出现。False = 文档已删除、本地仍保留（孤儿）。
     in_doc: Mapped[bool] = mapped_column(Boolean, default=True, server_default=text("1"), index=True)
     # 展示优先级：数字越低越靠前，NULL=未设置（排在已设置者之后）。本地附加，同步不覆盖。
@@ -82,6 +85,7 @@ DATA_FIELDS = [
     "uid", "seq", "group_date", "name", "phone", "has_contract", "company",
     "coop_period", "shipment", "note", "size", "height", "weight",
     "bust", "waist", "hip", "video_status", "douyin_id", "address",
+    "delivery_status",
 ]
 
 
@@ -103,6 +107,10 @@ def _migrate_schema() -> None:
         if "priority" not in cols:
             conn.exec_driver_sql(
                 "ALTER TABLE kol ADD COLUMN priority INTEGER"
+            )
+        if "delivery_status" not in cols:
+            conn.exec_driver_sql(
+                "ALTER TABLE kol ADD COLUMN delivery_status VARCHAR(64)"
             )
 
 
@@ -146,6 +154,7 @@ def _normalize(row: dict) -> dict:
         "video_status": str(row.get("video_status") or "") or None,
         "douyin_id": str(row.get("douyin_id") or "") or None,
         "address": str(row.get("address") or "") or None,
+        "delivery_status": str(row.get("delivery_status") or "") or None,
     }
 
 
@@ -175,25 +184,24 @@ def _migrate_uid(session, old_uid: str, new_uid: str) -> None:
     session.execute(text("DELETE FROM kol WHERE uid = :u"), {"u": old_uid})
 
 
-def upsert_rows(rows: list[dict]) -> dict:
-    """按 uid upsert。返回 {inserted, updated, total}。
+def _upsert_loop(rows: list[dict], *, incremental: bool, now: datetime) -> dict:
+    """核心 upsert 逻辑。返回 {inserted, updated, total}。
 
     去重增强：若新数据的电话能匹配到库中另一条 uid 不同的记录（典型场景：
     某人原来没填抖音号、后来补填导致 uid 从 np:.. 变成 dy:..），则先把旧记录
     （含照片）迁移到新 uid，避免产生重复卡片。
+
+    incremental=False（全量同步）：先把所有已有记录 in_doc 置 False，命中再置回
+    True，未出现者保持 False（文档已删除）。安全阀：rows 为空时跳过标记。
+    incremental=True（本地导入）：不碰未出现记录的 in_doc；命中的 in_doc=False 行
+    置回 True（重新激活），新增行 in_doc=True。
     """
-    now = datetime.now()
     inserted = updated = 0
 
     with SessionLocal() as session:
-        # 软标记：本次同步拉到数据时，先把所有已有记录标记为“文档中不存在”，
-        # 随后 upsert 命中的记录再置回 True；本次未出现者保持 False（文档已删除）。
-        # 安全阀：rows 为空（同步异常/权限问题）时跳过标记，避免误标全部。
-        if rows:
+        if rows and not incremental:
             session.query(Kol).update({Kol.in_doc: False}, synchronize_session=False)
 
-        existing_uids = set(session.scalars(select(Kol.uid)).all())
-        # 姓名+电话 -> uid 映射，用于查重迁移（兼容历史上用抖音号当 uid 的旧记录）
         key_to_uid: dict[str, str] = {}
         for u, n, p in session.execute(select(Kol.uid, Kol.name, Kol.phone)).all():
             n = (n or "").strip()
@@ -212,33 +220,137 @@ def upsert_rows(rows: list[dict]) -> dict:
             if (n or p) and key in key_to_uid and key_to_uid[key] != uid:
                 old_uid = key_to_uid[key]
                 _migrate_uid(session, old_uid, uid)
-                existing_uids.discard(old_uid)
             if n or p:
                 key_to_uid[key] = uid
 
             update_cols = {k: v for k, v in data.items() if k != "uid"}
 
-            # 版本无关的 upsert：存在则更新（保留 created_at），否则插入
             obj = session.get(Kol, uid)
             if obj is None:
                 session.add(Kol(**data, in_doc=True, created_at=now, updated_at=now))
                 inserted += 1
-                existing_uids.add(uid)
             else:
                 for col, val in update_cols.items():
                     setattr(obj, col, val)
-                obj.in_doc = True  # 本次出现在文档中
+                obj.in_doc = True  # 出现即视为有效（增量导入会把已移除的行重新激活）
                 obj.updated_at = now
                 updated += 1
 
-        session.add(SyncLog(
-            synced_at=now, total=len(rows),
-            inserted=inserted, updated=updated, message="ok",
-        ))
         session.commit()
 
-    # 注意：updated 这里是“命中已存在记录”的数量，含内容未变的。
     return {"inserted": inserted, "updated": updated, "total": len(rows)}
+
+
+def upsert_rows(rows: list[dict]) -> dict:
+    """全量同步 upsert（软删除语义），并写一条同步日志。"""
+    now = datetime.now()
+    stats = _upsert_loop(rows, incremental=False, now=now)
+    with SessionLocal() as session:
+        session.add(SyncLog(
+            synced_at=now, total=len(rows),
+            inserted=stats["inserted"], updated=stats["updated"], message="ok",
+        ))
+        session.commit()
+    return stats
+
+
+def import_rows(rows: list[dict]) -> dict:
+    """本地增量导入 upsert：不写同步日志、不触碰未出现记录的 in_doc。"""
+    return _upsert_loop(rows, incremental=True, now=datetime.now())
+
+
+def _payload_to_data(payload: dict) -> dict:
+    """把前端表单 payload（标准字段名）规整成数据库列类型（复用 _normalize）。"""
+    row = {
+        "uid": "",
+        "seq": payload.get("seq"),
+        "group_date": payload.get("group_date"),
+        "name": str(payload.get("name") or "").strip(),
+        "phone": str(payload.get("phone") or "").strip(),
+        "has_contract": cleaner._to_bool(payload.get("has_contract")),
+        "company": payload.get("company"),
+        "coop_period": payload.get("coop_period"),
+        "shipment": payload.get("shipment"),
+        "note": payload.get("note"),
+        "size": str(payload.get("size") or "").strip().upper() or None,
+        "height": payload.get("height"),
+        "weight": payload.get("weight"),
+        "bust": payload.get("bust"),
+        "waist": payload.get("waist"),
+        "hip": payload.get("hip"),
+        "video_status": payload.get("video_status"),
+        "douyin_id": payload.get("douyin_id"),
+        "address": payload.get("address"),
+        "delivery_status": payload.get("delivery_status"),
+    }
+    return _normalize(row)
+
+
+def create_kol(payload: dict) -> str:
+    """手动新增博主。姓名、电话必填。返回新 uid；同名同电话已存在则抛 ValueError。"""
+    name = str(payload.get("name") or "").strip()
+    phone = str(payload.get("phone") or "").strip()
+    if not name:
+        raise ValueError("姓名不能为空")
+    if not phone:
+        raise ValueError("电话不能为空")
+
+    data = _payload_to_data(payload)
+    uid = cleaner._make_uid({"name": name, "phone": phone, "douyin_id": data.get("douyin_id") or ""})
+    data["uid"] = uid
+    now = datetime.now()
+
+    with SessionLocal() as session:
+        existing = session.get(Kol, uid)
+        if existing is not None:
+            if existing.in_doc:
+                raise ValueError(f"已存在同名同电话的博主（{name} {phone}）")
+            else:
+                raise ValueError(f"该博主（{name} {phone}）在「已移除博主」列表中，请先在已移除博主面板恢复后再编辑")
+        session.add(Kol(**data, in_doc=True, created_at=now, updated_at=now))
+        session.commit()
+    return uid
+
+
+def update_kol(uid: str, payload: dict) -> str | None:
+    """编辑博主业务字段（全字段覆盖语义：payload 中未提供的字段会被规整为 NULL）。
+
+    姓名/电话变更会迁移 uid（保留照片+priority+created_at）。
+    返回新 uid（可能等于旧 uid）；博主不存在返回 None；新 uid 撞车抛 ValueError。
+    注意：前端 KolForm 始终提交全字段；若直接调用 API，需传完整字段，避免误清空。"""
+    name = str(payload.get("name") or "").strip()
+    phone = str(payload.get("phone") or "").strip()
+    if not name:
+        raise ValueError("姓名不能为空")
+    if not phone:
+        raise ValueError("电话不能为空")
+
+    data = _payload_to_data(payload)
+    new_uid = cleaner._make_uid({"name": name, "phone": phone, "douyin_id": data.get("douyin_id") or ""})
+    data["uid"] = new_uid
+    now = datetime.now()
+
+    with SessionLocal() as session:
+        obj = session.get(Kol, uid)
+        if obj is None:
+            return None
+
+        if new_uid != uid:
+            if session.get(Kol, new_uid) is not None:
+                raise ValueError(f"已存在同名同电话的博主（{name} {phone}）")
+            old_priority = obj.priority
+            old_created_at = obj.created_at
+            _migrate_uid(session, uid, new_uid)  # 删除旧行 + 迁移照片
+            session.add(Kol(**data, in_doc=True, priority=old_priority,
+                            created_at=old_created_at, updated_at=now))
+        else:
+            update_cols = {k: v for k, v in data.items() if k != "uid"}
+            for col, val in update_cols.items():
+                setattr(obj, col, val)
+            obj.updated_at = now
+
+        session.commit()
+    return new_uid
 
 
 def get_last_sync() -> dict | None:

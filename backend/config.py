@@ -46,8 +46,8 @@ KDOCS_TOKEN = os.environ.get("KDOCS_TOKEN", "")
 KDOCS_FILE_ID = os.environ.get("KDOCS_FILE_ID", "")
 KDOCS_SCRIPT_ID = os.environ.get("KDOCS_SCRIPT_ID", "")
 
-# 同步间隔（秒），默认 5 分钟
-SYNC_INTERVAL_SECONDS = int(os.environ.get("SYNC_INTERVAL_SECONDS", "300"))
+# 同步间隔（秒），默认 2 小时（7200s）
+SYNC_INTERVAL_SECONDS = int(os.environ.get("SYNC_INTERVAL_SECONDS", "7200"))
 
 # 运行环境：development / production。生产环境下缺失关键配置会直接拒绝启动。
 APP_ENV = os.environ.get("APP_ENV", "development").strip().lower()

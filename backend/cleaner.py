@@ -33,6 +33,8 @@ HEADER_MAP = {
     "抖音视频情况": "video_status",
     "抖音号": "douyin_id",
     "收货地址": "address",
+    "快递状态": "delivery_status",
+    "快递": "delivery_status",
 }
 
 DATE_FIELDS = {"group_date"}
@@ -148,10 +150,15 @@ def _make_uid(row: dict) -> str:
     return f"np:{name}|"
 
 
-def clean_rows(raw_rows: list[dict]) -> list[dict]:
+def clean_rows(raw_rows: list[dict], require_phone: bool = False) -> list[dict]:
     cleaned = []
     for raw in raw_rows:
         row = clean_row(raw)
-        if str(row.get("name", "")).strip():  # 必须有姓名才算有效
-            cleaned.append(row)
+        name = str(row.get("name", "")).strip()
+        phone = str(row.get("phone", "")).strip()
+        if not name:
+            continue
+        if require_phone and not phone:
+            continue
+        cleaned.append(row)
     return cleaned

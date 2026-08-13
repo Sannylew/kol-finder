@@ -1,7 +1,8 @@
-import { useEffect, useState } from "react";
-import { applyKolPriorities, deleteKol, fetchKols } from "../api";
+import { useEffect, useRef, useState } from "react";
+import { applyKolPriorities, deleteKol, fetchKols, importKols } from "../api";
 import type { Kol } from "../types";
 import ConfirmDialog from "../components/ConfirmDialog";
+import KolForm from "./KolForm";
 
 const SORT_PAGE_SIZE = 1000;
 
@@ -38,6 +39,10 @@ export default function KolAdmin() {
   const [excluded, setExcluded] = useState<Set<string>>(new Set());
   const [priorityDrafts, setPriorityDrafts] = useState<Record<string, string>>({});
   const [confirmDel, setConfirmDel] = useState<Kol | null>(null);
+  const [confirmImport, setConfirmImport] = useState<File | null>(null);
+  const [formOpen, setFormOpen] = useState(false);
+  const [editingKol, setEditingKol] = useState<Kol | null>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
   const [msg, setMsg] = useState<{ type: "ok" | "err"; text: string } | null>(null);
 
   function makeOrderDrafts(list: Kol[], skip = excluded) {
@@ -226,6 +231,49 @@ export default function KolAdmin() {
     }
   }
 
+  function openCreate() {
+    setEditingKol(null);
+    setFormOpen(true);
+  }
+
+  function openEdit(k: Kol) {
+    setEditingKol(k);
+    setFormOpen(true);
+  }
+
+  function handleSaved() {
+    setFormOpen(false);
+    setEditingKol(null);
+    setMsg({ type: "ok", text: "已保存" });
+    loadList();
+  }
+
+  async function handleImportFile(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    if (dirty) {
+      setConfirmImport(file);
+      return;
+    }
+    await doImport(file);
+  }
+
+  async function doImport(file: File) {
+    setConfirmImport(null);
+    setSaving(true);
+    setMsg(null);
+    try {
+      const res = await importKols(file);
+      setMsg({ type: "ok", text: `导入完成：新增 ${res.inserted}，更新 ${res.updated}，跳过 ${res.skipped}` });
+      loadList();
+    } catch (err: any) {
+      setMsg({ type: "err", text: err?.response?.data?.detail || "导入失败" });
+    } finally {
+      setSaving(false);
+    }
+  }
+
   return (
     <div className="admin-page">
       <div className="admin-page-head kol-admin-head">
@@ -234,6 +282,12 @@ export default function KolAdmin() {
           <span className="hint">共 {total} 位，拖动调整前台展示顺序，数字越小越靠前</span>
         </div>
         <div className="kol-head-actions">
+          <button className="btn-ghost sm" onClick={() => fileRef.current?.click()} disabled={saving}>
+            导入 xlsx
+          </button>
+          <button className="btn-primary sm" onClick={openCreate}>
+            新增博主
+          </button>
           <button className="btn-ghost sm" onClick={loadList} disabled={loading || saving}>
             重新加载
           </button>
@@ -332,6 +386,7 @@ export default function KolAdmin() {
                       <button className="link-btn" disabled={i === items.length - 1 || saving || orderLocked()} onClick={() => move(k.uid, 1)}>下移</button>
                       <button className="link-btn" disabled={saving || orderLocked()} onClick={() => pin(k.uid)}>置顶</button>
                       <button className="link-btn" disabled={saving || isExcluded || orderLocked()} onClick={() => clearPriority(k.uid)}>移到默认</button>
+                      <button className="link-btn" disabled={saving} onClick={() => openEdit(k)}>编辑</button>
                       <button className="link-btn danger" disabled={saving} onClick={() => setConfirmDel(k)}>删除</button>
                     </div>
                   </div>
@@ -346,6 +401,21 @@ export default function KolAdmin() {
         </div>
       </div>
 
+      <input
+        ref={fileRef}
+        type="file"
+        accept=".xlsx"
+        style={{ display: "none" }}
+        onChange={handleImportFile}
+      />
+
+      <KolForm
+        open={formOpen}
+        initial={editingKol}
+        onClose={() => { setFormOpen(false); setEditingKol(null); }}
+        onSaved={handleSaved}
+      />
+
       <ConfirmDialog
         open={!!confirmDel}
         title="删除博主"
@@ -354,6 +424,15 @@ export default function KolAdmin() {
         danger
         onConfirm={handleDelete}
         onCancel={() => setConfirmDel(null)}
+      />
+
+      <ConfirmDialog
+        open={!!confirmImport}
+        title="导入确认"
+        message="有未保存的排序调整，导入后排序草稿将丢失。确定继续导入吗？"
+        confirmText="继续导入"
+        onConfirm={() => confirmImport && doImport(confirmImport)}
+        onCancel={() => setConfirmImport(null)}
       />
     </div>
   );

@@ -35,3 +35,6 @@ backend/backups/
 # 编辑器
 .vscode/
 .idea/
+
+# WorkBuddy internal
+/.workbuddy/

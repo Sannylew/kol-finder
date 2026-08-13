@@ -98,10 +98,11 @@ export default function SourceSettings() {
           <div className="select-wrap" style={{ display: "block" }}>
             <select value={interval} onChange={(e) => setInterval(e.target.value)} disabled={!autoSync} style={{ width: "100%" }}>
               <option value="60">每 1 分钟</option>
-              <option value="300">每 5 分钟（默认）</option>
+              <option value="300">每 5 分钟</option>
               <option value="600">每 10 分钟</option>
               <option value="1800">每 30 分钟</option>
               <option value="3600">每 1 小时</option>
+              <option value="7200">每 2 小时（默认）</option>
               <option value="21600">每 6 小时</option>
               <option value="43200">每 12 小时</option>
               <option value="86400">每 24 小时</option>

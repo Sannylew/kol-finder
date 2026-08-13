@@ -17,6 +17,8 @@ from fastapi.staticfiles import StaticFiles
 
 import config
 import db
+import cleaner
+import importer
 import photos
 import queries
 import settings_store
@@ -182,6 +184,72 @@ def delete_kol(uid: str, _user: str = Depends(auth.verify_token)):
         raise HTTPException(status_code=404, detail="未找到该博主")
     logger.warning("删除博主 by=%s: uid=%s", _user, uid)
     return {"ok": True}
+
+
+@app.post("/api/kols")
+def create_kol(payload: dict, _user: str = Depends(auth.verify_token)):
+    """手动新增博主。姓名、电话必填。需登录。"""
+    try:
+        uid = db.create_kol(payload or {})
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    logger.info("新增博主 by=%s: uid=%s", _user, uid)
+    return {"ok": True, "uid": uid}
+
+
+@app.put("/api/kols/{uid}")
+def update_kol(uid: str, payload: dict, _user: str = Depends(auth.verify_token)):
+    """编辑博主全部业务字段。姓名/电话变更会迁移 uid。需登录。"""
+    try:
+        new_uid = db.update_kol(uid, payload or {})
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    if new_uid is None:
+        raise HTTPException(status_code=404, detail="未找到该博主")
+    logger.info("编辑博主 by=%s: %s -> %s", _user, uid, new_uid)
+    return {"ok": True, "uid": new_uid}
+
+
+@app.post("/api/kols/import")
+async def import_kols(file: UploadFile = File(...), _user: str = Depends(auth.verify_token)):
+    """上传 .xlsx 批量增量导入博主。需登录。"""
+    filename = file.filename or ""
+    if not filename.lower().endswith(".xlsx"):
+        raise HTTPException(status_code=400, detail="请上传 .xlsx 文件")
+
+    # 分块读取并限制大小（最大 20MB）
+    max_bytes = 20 * 1024 * 1024
+    chunks: list[bytes] = []
+    read = 0
+    while True:
+        chunk = await file.read(1024 * 1024)
+        if not chunk:
+            break
+        read += len(chunk)
+        if read > max_bytes:
+            raise HTTPException(status_code=400, detail="文件过大，最大 20MB")
+        chunks.append(chunk)
+    content = b"".join(chunks)
+
+    try:
+        raw_rows = importer.read_xlsx_rows(content)
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(status_code=400, detail=f"无法解析 xlsx：{e}")
+
+    cleaned = cleaner.clean_rows(raw_rows, require_phone=True)
+    skipped = len(raw_rows) - len(cleaned)
+    stats = db.import_rows(cleaned)
+    logger.info(
+        "导入 xlsx by=%s: total=%d inserted=%d updated=%d skipped=%d",
+        _user, stats["total"], stats["inserted"], stats["updated"], skipped,
+    )
+    return {
+        "ok": True,
+        "inserted": stats["inserted"],
+        "updated": stats["updated"],
+        "total": stats["total"],
+        "skipped": skipped,
+    }
 
 
 @app.put("/api/kols/{uid}/priority")

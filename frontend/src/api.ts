@@ -153,6 +153,57 @@ export async function deleteKol(uid: string): Promise<void> {
   await api.delete(`/api/kols/${encodeURIComponent(uid)}`);
 }
 
+// ---------- 手动新增 / 编辑博主 ----------
+
+export interface KolPayload {
+  name: string;
+  phone: string;
+  seq?: number | null;
+  group_date?: string | null;
+  has_contract?: boolean;
+  company?: string | null;
+  coop_period?: string | null;
+  shipment?: string | null;
+  note?: string | null;
+  size?: string | null;
+  height?: number | null;
+  weight?: number | null;
+  bust?: number | null;
+  waist?: number | null;
+  hip?: number | null;
+  video_status?: string | null;
+  douyin_id?: string | null;
+  address?: string | null;
+  delivery_status?: string | null;
+}
+
+export async function createKol(payload: KolPayload): Promise<{ ok: boolean; uid: string }> {
+  const { data } = await api.post("/api/kols", payload);
+  return data;
+}
+
+export async function updateKol(uid: string, payload: KolPayload): Promise<{ ok: boolean; uid: string }> {
+  const { data } = await api.put(`/api/kols/${encodeURIComponent(uid)}`, payload);
+  return data;
+}
+
+export interface ImportResult {
+  ok: boolean;
+  inserted: number;
+  updated: number;
+  total: number;
+  skipped: number;
+}
+
+export async function importKols(file: File): Promise<ImportResult> {
+  const form = new FormData();
+  form.append("file", file);
+  const { data } = await api.post("/api/kols/import", form, {
+    headers: { "Content-Type": "multipart/form-data" },
+  });
+  return data;
+}
+
 export async function purgeRemovedKols(): Promise<{ deleted: number }> {
   const { data } = await api.post("/api/kols/removed/purge");
   return data;

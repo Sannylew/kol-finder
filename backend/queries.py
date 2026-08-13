@@ -43,7 +43,7 @@ def _apply_mask(row: dict) -> dict:
     # 完全保留明文的字段（识别 + 系统字段 + 身材数据）
     keep_plain = {
         "uid", "name", "has_contract", "photo_url", "photo_thumb_url", "updated_at",
-        "height", "weight", "bust", "waist", "hip", "priority",
+        "height", "weight", "bust", "waist", "hip", "priority", "delivery_status",
     }
     # 用专门规则部分遮罩的字段
     out = dict(row)
@@ -88,6 +88,7 @@ def _row_to_dict(k: Kol) -> dict:
         "video_status": k.video_status,
         "douyin_id": k.douyin_id,
         "address": k.address,
+        "delivery_status": k.delivery_status,
         "priority": k.priority,
         "updated_at": k.updated_at.isoformat(timespec="seconds") if k.updated_at else None,
     }
